@@ -1,0 +1,79 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the application",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager", "engineer", "line_leader", "maintenance_engineer", "pending"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    },
+    "Line": {
+      "title": "Production Line",
+      "description": "A manufacturing production line",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdAt"]
+    },
+    "Machine": {
+      "title": "Machine",
+      "description": "A machine on a production line",
+      "type": "object",
+      "properties": {
+        "lineId": { "type": "string" },
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["running", "down"] },
+        "currentIncidentId": { "type": ["string", "null"] },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["lineId", "name", "status", "createdAt"]
+    },
+    "Incident": {
+      "title": "Downtime Incident",
+      "description": "A record of machine downtime",
+      "type": "object",
+      "properties": {
+        "lineId": { "type": "string" },
+        "machineId": { "type": "string" },
+        "machineName": { "type": "string" },
+        "lineName": { "type": "string" },
+        "reportedBy": { "type": "string" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": ["string", "null"], "format": "date-time" },
+        "status": { "type": "string", "enum": ["open", "acknowledged", "resolved"] },
+        "acknowledgedBy": { "type": ["string", "null"] },
+        "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" },
+        "resolvedBy": { "type": ["string", "null"] },
+        "durationMinutes": { "type": ["number", "null"] }
+      },
+      "required": ["lineId", "machineId", "machineName", "lineName", "reportedBy", "startTime", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles and roles"
+    },
+    "/lines/{lineId}": {
+      "schema": { "$ref": "#/entities/Line" },
+      "description": "Production lines"
+    },
+    "/machines/{machineId}": {
+      "schema": { "$ref": "#/entities/Machine" },
+      "description": "Machines"
+    },
+    "/incidents/{incidentId}": {
+      "schema": { "$ref": "#/entities/Incident" },
+      "description": "Downtime incidents"
+    }
+  }
+}

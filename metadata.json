@@ -1,0 +1,5 @@
+{
+  "name": "Manufacturing Downtime Tracker",
+  "description": "Track machine downtime, notify maintenance engineers, and monitor production lines.",
+  "requestFramePermissions": []
+}

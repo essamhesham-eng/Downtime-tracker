@@ -1,0 +1,213 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - displayName: string (optional)
+    //   - role: string (required, enum: 'admin', 'manager', 'engineer', 'line_leader', 'maintenance_engineer', 'pending')
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: lines
+    // Document ID: {lineId}
+    // Fields:
+    //   - name: string (required)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: machines
+    // Document ID: {machineId}
+    // Fields:
+    //   - lineId: string (required)
+    //   - name: string (required)
+    //   - status: string (required, enum: 'running', 'down')
+    //   - currentIncidentId: string | null (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: incidents
+    // Document ID: {incidentId}
+    // Fields:
+    //   - lineId: string (required)
+    //   - machineId: string (required)
+    //   - machineName: string (required)
+    //   - lineName: string (required)
+    //   - reportedBy: string (required)
+    //   - startTime: timestamp (required)
+    //   - endTime: timestamp | null (optional)
+    //   - status: string (required, enum: 'open', 'acknowledged', 'resolved')
+    //   - acknowledgedBy: string | null (optional)
+    //   - acknowledgedAt: timestamp | null (optional)
+    //   - resolvedBy: string | null (optional)
+    //   - durationMinutes: number | null (optional)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'admin') ||
+        request.auth.token.email == "essam.bn@yahoo.com" ||
+        request.auth.token.email == "cron@sharestate.com"
+      );
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == role;
+    }
+
+    function isAtLeastEngineer() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+        getUserData().role == 'admin' ||
+        getUserData().role == 'manager' ||
+        getUserData().role == 'engineer' ||
+        getUserData().role == 'maintenance_engineer'
+      );
+    }
+
+    function isLineLeader() {
+      return hasRole('line_leader');
+    }
+
+    function isMaintenanceEngineer() {
+      return hasRole('maintenance_engineer');
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Domain Validators
+    function isValidInvitation(data) {
+      return hasOnlyAllowedFields(['email', 'displayName', 'role', 'status', 'createdAt', 'invitedBy']) &&
+             data.email is string && isValidEmail(data.email) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+             data.role in ['admin', 'manager', 'engineer', 'line_leader', 'maintenance_engineer', 'pending'] &&
+             data.status == 'invited' &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('invitedBy' in data) || data.invitedBy is string);
+    }
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'role', 'createdAt', 'id', 'updatedAt', 'status']) &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 100 &&
+             data.email is string && isValidEmail(data.email) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+             data.role in ['admin', 'manager', 'engineer', 'line_leader', 'maintenance_engineer', 'pending'] &&
+             (!('status' in data) || data.status in ['invited', 'active']) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function isValidLine(data) {
+      return hasOnlyAllowedFields(['name', 'createdAt', 'id', 'updatedAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function isValidMachine(data) {
+      return hasOnlyAllowedFields(['lineId', 'name', 'status', 'currentIncidentId', 'createdAt', 'order', 'id', 'updatedAt']) &&
+             data.lineId is string && data.lineId.size() > 0 && data.lineId.size() < 100 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.status in ['running', 'down'] &&
+             (!('currentIncidentId' in data) || data.currentIncidentId == null || (data.currentIncidentId is string && data.currentIncidentId.size() < 100)) &&
+             (!('order' in data) || data.order is number) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function isValidIncident(data) {
+      return hasOnlyAllowedFields(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'startTime', 'endTime', 'status', 'acknowledgedBy', 'acknowledgedAt', 'resolvedBy', 'durationMinutes', 'id', 'updatedAt', 'cause', 'action', 'reviewedBy', 'reviewedAt']) &&
+             data.lineId is string && data.lineId.size() > 0 && data.lineId.size() < 100 &&
+             data.machineId is string && data.machineId.size() > 0 && data.machineId.size() < 100 &&
+             data.machineName is string && data.machineName.size() > 0 && data.machineName.size() < 100 &&
+             data.lineName is string && data.lineName.size() > 0 && data.lineName.size() < 100 &&
+             data.reportedBy is string && data.reportedBy.size() > 0 && data.reportedBy.size() < 100 &&
+             (!('startTime' in data) || data.startTime is timestamp) &&
+             (!('endTime' in data) || data.endTime == null || data.endTime is timestamp) &&
+             data.status in ['open', 'acknowledged', 'resolved', 'pending_me_review'] &&
+             (!('acknowledgedBy' in data) || data.acknowledgedBy == null || (data.acknowledgedBy is string && data.acknowledgedBy.size() < 100)) &&
+             (!('acknowledgedAt' in data) || data.acknowledgedAt == null || data.acknowledgedAt is timestamp) &&
+             (!('resolvedBy' in data) || data.resolvedBy == null || (data.resolvedBy is string && data.resolvedBy.size() < 100)) &&
+             (!('durationMinutes' in data) || data.durationMinutes == null || data.durationMinutes is number) &&
+             (!('cause' in data) || data.cause == null || (data.cause is string && data.cause.size() < 1000)) &&
+             (!('action' in data) || data.action == null || (data.action is string && data.action.size() < 1000)) &&
+             (!('reviewedBy' in data) || data.reviewedBy == null || (data.reviewedBy is string && data.reviewedBy.size() < 100)) &&
+             (!('reviewedAt' in data) || data.reviewedAt == null || data.reviewedAt is timestamp);
+    }
+
+    match /invitations/{email} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidInvitation(request.resource.data);
+      allow update: if isAdmin() && isValidInvitation(request.resource.data);
+      allow delete: if isAuthenticated(); // Any authenticated user can delete their own invitation upon login
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'pending' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
+        isAdmin() ||
+        (isOwner(userId) && areImmutableFieldsUnchanged(['uid', 'email', 'role', 'createdAt']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /lines/{lineId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidLine(request.resource.data);
+      allow update: if isAdmin() && isValidLine(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
+      allow delete: if isAdmin();
+    }
+
+    match /machines/{machineId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidMachine(request.resource.data);
+      allow update: if isAuthenticated() && isValidMachine(request.resource.data) && (
+        (isAdmin() && areImmutableFieldsUnchanged(['createdAt'])) ||
+        (!isAdmin() && areImmutableFieldsUnchanged(['createdAt', 'lineId', 'name', 'order']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /incidents/{incidentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidIncident(request.resource.data) && request.resource.data.reportedBy == request.auth.uid;
+      allow update: if isAuthenticated() && isValidIncident(request.resource.data) && (
+        isAdmin() || areImmutableFieldsUnchanged(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'startTime'])
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}
