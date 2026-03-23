@@ -18,7 +18,7 @@ export function useAlarmNotification() {
 
     const q = query(
       collection(db, 'incidents'),
-      where('status', '==', 'open')
+      where('status', 'in', ['open', 'acknowledged'])
     );
 
     let currentIncidents: any[] = [];
@@ -59,6 +59,11 @@ export function useAlarmNotification() {
     const checkAlarms = () => {
       const now = new Date();
       currentIncidents.forEach(incident => {
+        // If assigned to someone else, don't notify
+        if (incident.assignedTo && incident.assignedTo.length > 0 && !incident.assignedTo.includes(profile?.uid)) {
+          return;
+        }
+
         const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
         const duration = differenceInMinutes(now, start);
         

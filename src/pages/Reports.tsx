@@ -22,6 +22,7 @@ export function Reports() {
   const [editCause, setEditCause] = useState('');
   const [editAction, setEditAction] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!['admin', 'manager', 'engineer'].includes(profile?.role || '')) return;
@@ -60,7 +61,7 @@ export function Reports() {
 
   const handleExport = () => {
     if (incidents.length === 0) {
-      alert('No data to export.');
+      setError('No data to export.');
       return;
     }
 
@@ -137,7 +138,7 @@ export function Reports() {
       setEditingIncident(null);
     } catch (error) {
       console.error('Error updating incident:', error);
-      alert('Failed to update incident. Make sure you have the right permissions.');
+      setError('Failed to update incident. Make sure you have the right permissions.');
     } finally {
       setIsSaving(false);
     }
@@ -149,6 +150,16 @@ export function Reports() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
+      {error && (
+        <div className="bg-red-50 text-red-700 p-4 rounded-lg flex items-center justify-between border border-red-100 mb-6">
+          <div className="flex items-center gap-2">
+            <p className="font-medium">{error}</p>
+          </div>
+          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">
+            &times;
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-green-100 text-green-700 rounded-full">

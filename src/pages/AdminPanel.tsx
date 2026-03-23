@@ -4,6 +4,7 @@ import { db, firebaseConfig } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Settings, Plus, Trash2, UserCog, GripVertical, Mail, Clock, Save, UserPlus } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
+import { MultiSelect } from '../components/MultiSelect';
 
 export function AdminPanel() {
   const { profile } = useAuth();
@@ -14,6 +15,7 @@ export function AdminPanel() {
 
   const [newLineName, setNewLineName] = useState('');
   const [newMachineName, setNewMachineName] = useState('');
+  const [newMachineMEs, setNewMachineMEs] = useState<string[]>([]);
   const [selectedLineForMachine, setSelectedLineForMachine] = useState('');
   const [itemToDelete, setItemToDelete] = useState<{type: 'line' | 'machine', id: string, name: string} | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -111,9 +113,11 @@ export function AdminPanel() {
         status: 'running',
         currentIncidentId: null,
         order: nextOrder,
+        defaultMEs: newMachineMEs.length > 0 ? newMachineMEs : null,
         createdAt: serverTimestamp(),
       });
       setNewMachineName('');
+      setNewMachineMEs([]);
       setSelectedLineForMachine('');
     } catch (error) {
       console.error('Error adding machine:', error);
@@ -205,14 +209,18 @@ export function AdminPanel() {
   const handleInviteUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteEmail || !invitePassword) return;
+    
+    const cleanEmail = inviteEmail.trim().toLowerCase();
+    const cleanName = inviteName.trim();
+    
     setIsInviting(true);
     try {
       // Check if user already exists in the users collection
-      const existingUser = users.find(u => u.email?.toLowerCase() === inviteEmail.toLowerCase());
+      const existingUser = users.find(u => u.email?.toLowerCase() === cleanEmail);
       if (existingUser) {
         // Just update their role and maybe displayName if provided
         const updates: any = { role: inviteRole };
-        if (inviteName) updates.displayName = inviteName;
+        if (cleanName) updates.displayName = cleanName;
         
         await updateDoc(doc(db, 'users', existingUser.id), updates);
         setIsInviteModalOpen(false);
@@ -225,10 +233,10 @@ export function AdminPanel() {
       }
 
       // Check if user already exists in the invitations collection
-      const existingInvitation = invitations.find(inv => inv.email?.toLowerCase() === inviteEmail.toLowerCase());
+      const existingInvitation = invitations.find(inv => inv.email?.toLowerCase() === cleanEmail);
       if (existingInvitation) {
         const updates: any = { role: inviteRole };
-        if (inviteName) updates.displayName = inviteName;
+        if (cleanName) updates.displayName = cleanName;
         
         await updateDoc(doc(db, 'invitations', existingInvitation.id), updates);
         setIsInviteModalOpen(false);
@@ -247,7 +255,7 @@ export function AdminPanel() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          email: inviteEmail,
+          email: cleanEmail,
           password: invitePassword,
           returnSecureToken: true
         })
@@ -263,8 +271,8 @@ export function AdminPanel() {
       
       await setDoc(doc(db, 'users', newUid), {
         uid: newUid,
-        email: inviteEmail,
-        displayName: inviteName,
+        email: cleanEmail,
+        displayName: cleanName,
         role: inviteRole,
         status: 'invited',
         createdAt: serverTimestamp()
@@ -286,9 +294,9 @@ export function AdminPanel() {
         // User exists in Firebase Auth, but might not be in the users collection.
         // We can create an invitation for them.
         try {
-          await setDoc(doc(db, 'invitations', inviteEmail.toLowerCase()), {
-            email: inviteEmail.toLowerCase(),
-            displayName: inviteName,
+          await setDoc(doc(db, 'invitations', cleanEmail), {
+            email: cleanEmail,
+            displayName: cleanName,
             role: inviteRole,
             status: 'invited',
             createdAt: serverTimestamp(),
@@ -365,7 +373,7 @@ export function AdminPanel() {
         <h2 className="text-2xl font-bold text-gray-800">Admin Panel</h2>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 gap-8">
         {/* Manage Lines */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Production Lines</h3>
@@ -413,7 +421,7 @@ export function AdminPanel() {
                 <option key={line.id} value={line.id}>{line.name}</option>
               ))}
             </select>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
                 value={newMachineName}
@@ -421,6 +429,13 @@ export function AdminPanel() {
                 placeholder="New Machine Name"
                 className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 required
+              />
+              <MultiSelect
+                options={users.filter(u => u.role === 'maintenance_engineer').map(me => ({ value: me.id, label: me.displayName || me.email }))}
+                selectedValues={newMachineMEs}
+                onChange={setNewMachineMEs}
+                placeholder="All MEs (Default)"
+                className="w-full sm:w-48"
               />
               <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2">
                 <Plus size={18} /> Add
@@ -453,7 +468,7 @@ export function AdminPanel() {
                                 <li 
                                   ref={provided.innerRef}
                                   {...provided.draggableProps}
-                                  className={`flex justify-between items-center p-3 bg-white hover:bg-gray-50 ${snapshot.isDragging ? 'shadow-lg ring-1 ring-blue-500 z-10' : ''}`}
+                                  className={`flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 p-3 bg-white hover:bg-gray-50 ${snapshot.isDragging ? 'shadow-lg ring-1 ring-blue-500 z-10' : ''}`}
                                 >
                                   <div className="flex items-center gap-3">
                                     <div {...provided.dragHandleProps} className="text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing">
@@ -461,13 +476,31 @@ export function AdminPanel() {
                                     </div>
                                     <span className="font-medium text-gray-800">{machine.name}</span>
                                   </div>
-                                  <button 
-                                    onClick={() => handleDeleteMachine(machine.id, machine.name)} 
-                                    className="text-red-500 hover:text-red-700 p-1 ml-2"
-                                    title="Delete Machine"
-                                  >
-                                    <Trash2 size={18} />
-                                  </button>
+                                  <div className="flex items-center gap-2">
+                                    <MultiSelect
+                                      options={users.filter(u => u.role === 'maintenance_engineer').map(me => ({ value: me.id, label: me.displayName || me.email }))}
+                                      selectedValues={machine.defaultMEs || []}
+                                      onChange={async (newValues) => {
+                                        try {
+                                          await updateDoc(doc(db, 'machines', machine.id), {
+                                            defaultMEs: newValues.length > 0 ? newValues : null
+                                          });
+                                        } catch (err) {
+                                          console.error('Error updating default MEs:', err);
+                                          setErrorMsg('Failed to update default MEs.');
+                                        }
+                                      }}
+                                      placeholder="All MEs"
+                                      className="w-full sm:w-48"
+                                    />
+                                    <button 
+                                      onClick={() => handleDeleteMachine(machine.id, machine.name)} 
+                                      className="text-red-500 hover:text-red-700 p-1 ml-2"
+                                      title="Delete Machine"
+                                    >
+                                      <Trash2 size={18} />
+                                    </button>
+                                  </div>
                                 </li>
                               )}
                             </Draggable>

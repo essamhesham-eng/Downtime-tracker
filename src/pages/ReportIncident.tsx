@@ -12,6 +12,7 @@ export function ReportIncident() {
   const [selectedMachine, setSelectedMachine] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const qLines = query(collection(db, 'lines'), orderBy('createdAt', 'asc'));
@@ -55,6 +56,7 @@ export function ReportIncident() {
         machineName: machine.name,
         lineName: line.name,
         reportedBy: user.uid,
+        assignedTo: machine.defaultMEs || null,
         startTime: serverTimestamp(),
         status: 'open',
       });
@@ -69,9 +71,9 @@ export function ReportIncident() {
       setSelectedLine('');
       setSelectedMachine('');
       setTimeout(() => setSuccess(false), 3000);
-    } catch (error) {
-      console.error('Error reporting incident:', error);
-      alert('Failed to report incident.');
+    } catch (err) {
+      console.error('Error reporting incident:', err);
+      setError('Failed to report incident.');
     } finally {
       setLoading(false);
     }
@@ -92,6 +94,18 @@ export function ReportIncident() {
         <div className="mb-6 p-4 bg-green-50 text-green-700 rounded-lg flex items-center gap-2 border border-green-200">
           <CheckCircle size={20} />
           <span>Breakdown reported successfully. Maintenance team notified.</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 text-red-700 rounded-lg flex items-center justify-between border border-red-200">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={20} />
+            <span>{error}</span>
+          </div>
+          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">
+            &times;
+          </button>
         </div>
       )}
 

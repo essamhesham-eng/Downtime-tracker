@@ -117,10 +117,11 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'role', 'createdAt', 'id', 'updatedAt', 'status']) &&
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'role', 'createdAt', 'id', 'updatedAt', 'status', 'photoURL']) &&
              data.uid is string && data.uid.size() > 0 && data.uid.size() < 100 &&
              data.email is string && isValidEmail(data.email) &&
-             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 1000)) &&
              data.role in ['admin', 'manager', 'engineer', 'line_leader', 'maintenance_engineer', 'pending'] &&
              (!('status' in data) || data.status in ['invited', 'active']) &&
              (!('createdAt' in data) || data.createdAt is timestamp);
@@ -133,17 +134,18 @@ service cloud.firestore {
     }
 
     function isValidMachine(data) {
-      return hasOnlyAllowedFields(['lineId', 'name', 'status', 'currentIncidentId', 'createdAt', 'order', 'id', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['lineId', 'name', 'status', 'currentIncidentId', 'createdAt', 'order', 'id', 'updatedAt', 'defaultMEs']) &&
              data.lineId is string && data.lineId.size() > 0 && data.lineId.size() < 100 &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.status in ['running', 'down'] &&
              (!('currentIncidentId' in data) || data.currentIncidentId == null || (data.currentIncidentId is string && data.currentIncidentId.size() < 100)) &&
-             (!('order' in data) || data.order is number) &&
+             (!('order' in data) || data.order == null || data.order is number) &&
+             (!('defaultMEs' in data) || data.defaultMEs == null || (data.defaultMEs is list && data.defaultMEs.size() < 100)) &&
              (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     function isValidIncident(data) {
-      return hasOnlyAllowedFields(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'startTime', 'endTime', 'status', 'acknowledgedBy', 'acknowledgedAt', 'resolvedBy', 'durationMinutes', 'id', 'updatedAt', 'cause', 'action', 'reviewedBy', 'reviewedAt']) &&
+      return hasOnlyAllowedFields(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'startTime', 'endTime', 'status', 'acknowledgedBy', 'acknowledgedAt', 'resolvedBy', 'durationMinutes', 'id', 'updatedAt', 'cause', 'action', 'reviewedBy', 'reviewedAt', 'assignedTo']) &&
              data.lineId is string && data.lineId.size() > 0 && data.lineId.size() < 100 &&
              data.machineId is string && data.machineId.size() > 0 && data.machineId.size() < 100 &&
              data.machineName is string && data.machineName.size() > 0 && data.machineName.size() < 100 &&
@@ -159,7 +161,8 @@ service cloud.firestore {
              (!('cause' in data) || data.cause == null || (data.cause is string && data.cause.size() < 1000)) &&
              (!('action' in data) || data.action == null || (data.action is string && data.action.size() < 1000)) &&
              (!('reviewedBy' in data) || data.reviewedBy == null || (data.reviewedBy is string && data.reviewedBy.size() < 100)) &&
-             (!('reviewedAt' in data) || data.reviewedAt == null || data.reviewedAt is timestamp);
+             (!('reviewedAt' in data) || data.reviewedAt == null || data.reviewedAt is timestamp) &&
+             (!('assignedTo' in data) || data.assignedTo == null || (data.assignedTo is list && data.assignedTo.size() < 100));
     }
 
     match /invitations/{email} {
@@ -171,7 +174,10 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'pending' || isAdmin());
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && (request.resource.data.role == 'pending' || isAdmin())) ||
+        isAdmin()
+      );
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
         isAdmin() ||
         (isOwner(userId) && areImmutableFieldsUnchanged(['uid', 'email', 'role', 'createdAt']))
@@ -191,7 +197,7 @@ service cloud.firestore {
       allow create: if isAdmin() && isValidMachine(request.resource.data);
       allow update: if isAuthenticated() && isValidMachine(request.resource.data) && (
         (isAdmin() && areImmutableFieldsUnchanged(['createdAt'])) ||
-        (!isAdmin() && areImmutableFieldsUnchanged(['createdAt', 'lineId', 'name', 'order']))
+        (!isAdmin() && areImmutableFieldsUnchanged(['createdAt', 'lineId', 'name', 'order', 'defaultMEs']))
       );
       allow delete: if isAdmin();
     }
@@ -200,7 +206,7 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidIncident(request.resource.data) && request.resource.data.reportedBy == request.auth.uid;
       allow update: if isAuthenticated() && isValidIncident(request.resource.data) && (
-        isAdmin() || areImmutableFieldsUnchanged(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'startTime'])
+        isAdmin() || areImmutableFieldsUnchanged(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'startTime', 'assignedTo'])
       );
       allow delete: if isAdmin();
     }

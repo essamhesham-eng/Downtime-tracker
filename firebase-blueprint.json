@@ -33,6 +33,7 @@
         "status": { "type": "string", "enum": ["running", "down"] },
         "currentIncidentId": { "type": ["string", "null"] },
         "order": { "type": "number" },
+        "defaultMEs": { "type": ["array", "null"], "items": { "type": "string" } },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["lineId", "name", "status", "createdAt"]
@@ -53,7 +54,8 @@
         "acknowledgedBy": { "type": ["string", "null"] },
         "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" },
         "resolvedBy": { "type": ["string", "null"] },
-        "durationMinutes": { "type": ["number", "null"] }
+        "durationMinutes": { "type": ["number", "null"] },
+        "assignedTo": { "type": ["array", "null"], "items": { "type": "string" } }
       },
       "required": ["lineId", "machineId", "machineName", "lineName", "reportedBy", "startTime", "status"]
     }

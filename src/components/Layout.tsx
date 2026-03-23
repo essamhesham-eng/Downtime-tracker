@@ -1,7 +1,7 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, AlertTriangle, Settings, FileSpreadsheet, LogOut, Wrench } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, Settings, FileSpreadsheet, LogOut, Wrench, User } from 'lucide-react';
 import { useAlarmNotification } from '../hooks/useAlarmNotification';
 
 export function Layout() {
@@ -16,6 +16,7 @@ export function Layout() {
     { path: '/incidents', label: 'Active Incidents', icon: Wrench, roles: ['admin', 'maintenance_engineer', 'line_leader', 'manager', 'engineer'] },
     { path: '/reports', label: 'Export Data', icon: FileSpreadsheet, roles: ['admin', 'manager', 'engineer'] },
     { path: '/admin', label: 'Admin Panel', icon: Settings, roles: ['admin'] },
+    { path: '/profile', label: 'Profile', icon: User, roles: ['admin', 'manager', 'engineer', 'line_leader', 'maintenance_engineer'] },
   ];
 
   const filteredNav = navItems.filter(item => profile?.role && item.roles.includes(profile.role));
