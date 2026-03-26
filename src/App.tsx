@@ -147,17 +147,17 @@ function AppRoutes() {
       <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />
         <Route path="report" element={
-          <ProtectedRoute allowedRoles={['admin', 'line_leader']}>
+          <ProtectedRoute allowedRoles={['admin', 'line_leader', 'pd_engineer']}>
             <ReportIncident />
           </ProtectedRoute>
         } />
         <Route path="incidents" element={
-          <ProtectedRoute allowedRoles={['admin', 'maintenance_engineer', 'line_leader', 'manager', 'engineer']}>
+          <ProtectedRoute allowedRoles={['admin', 'maintenance_engineer', 'line_leader', 'manager', 'pd_engineer']}>
             <IncidentsList />
           </ProtectedRoute>
         } />
         <Route path="reports" element={
-          <ProtectedRoute allowedRoles={['admin', 'manager', 'engineer']}>
+          <ProtectedRoute allowedRoles={['admin', 'manager', 'pd_engineer']}>
             <Reports />
           </ProtectedRoute>
         } />

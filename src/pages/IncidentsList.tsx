@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { collection, query, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { differenceInMinutes, format } from 'date-fns';
+import { format } from 'date-fns';
 import { Wrench, CheckCircle, Clock, AlertTriangle, Filter, Trash2, ArrowUpDown } from 'lucide-react';
 
 import { MultiSelect } from '../components/MultiSelect';
@@ -11,6 +11,7 @@ export function IncidentsList() {
   const { user, profile } = useAuth();
   const [incidents, setIncidents] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
   const [now, setNow] = useState(new Date());
   const [reviewingIncident, setReviewingIncident] = useState<any | null>(null);
   const [cause, setCause] = useState('');
@@ -45,9 +46,15 @@ export function IncidentsList() {
       setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
+    const qGroups = query(collection(db, 'groups'));
+    const unsubGroups = onSnapshot(qGroups, (snapshot) => {
+      setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     return () => {
       unsub();
       unsubUsers();
+      unsubGroups();
     };
   }, []);
 
@@ -69,13 +76,14 @@ export function IncidentsList() {
     if (!user) return;
     try {
       const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-      const duration = differenceInMinutes(new Date(), start);
+      const duration = Math.ceil((new Date().getTime() - start.getTime()) / 60000);
 
       const hasCauseAndAction = incident.cause && incident.action;
 
       await updateDoc(doc(db, 'incidents', incident.id), {
         status: hasCauseAndAction ? 'resolved' : 'pending_me_review',
         resolvedBy: user.uid,
+        resolvedByName: user.displayName || user.email || 'Unknown',
         endTime: serverTimestamp(),
         durationMinutes: duration,
       });
@@ -129,6 +137,18 @@ export function IncidentsList() {
     } catch (error) {
       console.error('Error assigning ME:', error);
       setError('Failed to assign ME.');
+    }
+  };
+
+  const handleAssignGroups = async (incidentId: string, groupIds: string[]) => {
+    if (profile?.role !== 'admin') return;
+    try {
+      await updateDoc(doc(db, 'incidents', incidentId), {
+        assignedGroups: groupIds.length > 0 ? groupIds : null
+      });
+    } catch (error) {
+      console.error('Error assigning groups:', error);
+      setError('Failed to assign groups.');
     }
   };
 
@@ -294,8 +314,40 @@ export function IncidentsList() {
               const isPendingReview = incident.status === 'pending_me_review';
               const duration = isPendingReview && incident.durationMinutes 
                 ? incident.durationMinutes 
-                : differenceInMinutes(now, start);
+                : Math.ceil((now.getTime() - start.getTime()) / 60000);
               const isAcknowledged = incident.status === 'acknowledged';
+
+              // Check if current user is assigned via individual assignment or group membership
+              const isUserAssigned = (() => {
+                if (!user) return false;
+                if (!incident.assignedTo && !incident.assignedGroups) return true; // All MEs if none assigned
+                
+                if (incident.assignedTo?.includes(user.uid)) return true;
+                
+                if (incident.assignedGroups) {
+                  const userGroups = groups.filter(g => g.userIds?.includes(user.uid));
+                  if (userGroups.some((g: any) => incident.assignedGroups.includes(g.id))) return true;
+                }
+                
+                return false;
+              })();
+
+              const assignedUserNames = (() => {
+                const names: string[] = [];
+                if (incident.assignedTo) {
+                  incident.assignedTo.forEach((id: string) => {
+                    const u = users.find(u => u.id === id);
+                    if (u) names.push(u.displayName || u.email);
+                  });
+                }
+                if (incident.assignedGroups) {
+                  incident.assignedGroups.forEach((id: string) => {
+                    const g = groups.find(g => g.id === id);
+                    if (g) names.push(`Group: ${g.name}`);
+                  });
+                }
+                return names.length > 0 ? names.join(', ') : 'All MEs';
+              })();
 
               return (
                 <div key={incident.id} className={`bg-white p-6 rounded-xl shadow-sm border-l-4 ${
@@ -304,7 +356,14 @@ export function IncidentsList() {
                 }`}>
                   <div className="flex justify-between items-start mb-4">
                     <div>
-                      <h3 className="text-lg font-bold text-gray-800">{incident.machineName}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-gray-800">{incident.machineName}</h3>
+                        {incident.type === 'maintenance' && (
+                          <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-[10px] font-bold rounded uppercase">
+                            Maintenance
+                          </span>
+                        )}
+                      </div>
                       <p className="text-sm text-gray-500">{incident.lineName}</p>
                     </div>
                     <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${
@@ -325,30 +384,40 @@ export function IncidentsList() {
                       <span>Downtime: {duration} mins {isPendingReview && '(Fixed)'}</span>
                     </div>
                     {profile?.role === 'admin' ? (
-                      <div className="flex items-center gap-2 text-sm text-gray-600 mt-2">
-                        <span className="font-medium">Assigned MEs:</span>
-                        <MultiSelect
-                          options={maintenanceEngineers.map(me => ({ value: me.id, label: me.displayName || me.email }))}
-                          selectedValues={incident.assignedTo || []}
-                          onChange={(newValues) => handleAssignME(incident.id, newValues)}
-                          placeholder="All MEs"
-                          className="w-full max-w-[200px]"
-                        />
+                      <div className="space-y-2 mt-2">
+                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                          <span className="font-medium whitespace-nowrap">Assign MEs:</span>
+                          <MultiSelect
+                            options={maintenanceEngineers.map(me => ({ value: me.id, label: me.displayName || me.email }))}
+                            selectedValues={incident.assignedTo || []}
+                            onChange={(newValues) => handleAssignME(incident.id, newValues)}
+                            placeholder="Individual MEs"
+                            className="w-full"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                          <span className="font-medium whitespace-nowrap">Assign Groups:</span>
+                          <MultiSelect
+                            options={groups.map(g => ({ value: g.id, label: g.name }))}
+                            selectedValues={incident.assignedGroups || []}
+                            onChange={(newValues) => handleAssignGroups(incident.id, newValues)}
+                            placeholder="Groups"
+                            className="w-full"
+                          />
+                        </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2 text-sm text-gray-600 mt-2">
-                        <span className="font-medium">Assigned MEs:</span>
+                      <div className="flex flex-col gap-1 text-sm text-gray-600 mt-2">
+                        <span className="font-medium">Assigned To:</span>
                         <span className="font-semibold text-blue-600">
-                          {incident.assignedTo && incident.assignedTo.length > 0 
-                            ? incident.assignedTo.map((id: string) => maintenanceEngineers.find(me => me.id === id)?.displayName || 'Unknown ME').join(', ') 
-                            : 'All MEs'}
+                          {assignedUserNames}
                         </span>
                       </div>
                     )}
                   </div>
 
                   <div className="flex gap-3">
-                    {profile?.role === 'maintenance_engineer' && !isAcknowledged && !isPendingReview && (
+                    {profile?.role === 'maintenance_engineer' && !isAcknowledged && !isPendingReview && isUserAssigned && (
                       <button
                         onClick={() => handleAcknowledge(incident.id)}
                         className="flex-1 py-2 bg-yellow-500 hover:bg-yellow-600 text-white font-medium rounded-lg transition-colors flex justify-center items-center gap-2"
@@ -358,7 +427,7 @@ export function IncidentsList() {
                       </button>
                     )}
                     
-                    {(profile?.role === 'line_leader' || profile?.role === 'admin') && !isPendingReview && (
+                    {(profile?.role === 'line_leader' || profile?.role === 'pd_engineer' || profile?.role === 'admin') && !isPendingReview && (
                       <button
                         onClick={() => handleResolve(incident)}
                         className="flex-1 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition-colors flex justify-center items-center gap-2"
@@ -368,7 +437,7 @@ export function IncidentsList() {
                       </button>
                     )}
 
-                    {(profile?.role === 'maintenance_engineer' || profile?.role === 'admin') && (
+                    {(profile?.role === 'maintenance_engineer' || profile?.role === 'pd_engineer' || profile?.role === 'admin') && (isUserAssigned || profile?.role === 'admin' || profile?.role === 'pd_engineer') && (
                       <button
                         onClick={() => {
                           setReviewingIncident(incident);
@@ -443,13 +512,15 @@ export function IncidentsList() {
                 <th className="p-4 font-medium cursor-pointer hover:bg-gray-100" onClick={() => handleSort('durationMinutes')}>
                   <div className="flex items-center gap-1">Duration <ArrowUpDown size={14} /></div>
                 </th>
+                <th className="p-4 font-medium">Reported By</th>
+                <th className="p-4 font-medium">Fixed By</th>
                 <th className="p-4 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredResolvedIncidents.length === 0 ? (
                 <tr>
-                  <td colSpan={profile?.role === 'admin' ? 6 : 5} className="p-8 text-center text-gray-500">No resolved incidents match your criteria.</td>
+                  <td colSpan={profile?.role === 'admin' ? 8 : 7} className="p-8 text-center text-gray-500">No resolved incidents match your criteria.</td>
                 </tr>
               ) : (
                 filteredResolvedIncidents.map(incident => {
@@ -470,8 +541,14 @@ export function IncidentsList() {
                       <td className="p-4 text-gray-600">{incident.lineName}</td>
                       <td className="p-4 text-gray-600">{format(start, 'MMM d, HH:mm')}</td>
                       <td className="p-4 font-medium text-red-600">{incident.durationMinutes} mins</td>
+                      <td className="p-4 text-gray-600">
+                        {incident.reportedByName || users.find(u => u.id === incident.reportedBy)?.displayName || users.find(u => u.id === incident.reportedBy)?.email || incident.reportedBy}
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        {incident.resolvedByName || users.find(u => u.id === incident.resolvedBy)?.displayName || users.find(u => u.id === incident.resolvedBy)?.email || incident.resolvedBy || 'N/A'}
+                      </td>
                       <td className="p-4">
-                        {(profile?.role === 'maintenance_engineer' || profile?.role === 'admin') && (
+                        {(profile?.role === 'maintenance_engineer' || profile?.role === 'pd_engineer' || profile?.role === 'admin') && (
                           <button
                             onClick={() => {
                               setReviewingIncident(incident);

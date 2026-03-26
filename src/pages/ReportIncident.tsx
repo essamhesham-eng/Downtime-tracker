@@ -10,6 +10,7 @@ export function ReportIncident() {
   const [machines, setMachines] = useState<any[]>([]);
   const [selectedLine, setSelectedLine] = useState('');
   const [selectedMachine, setSelectedMachine] = useState('');
+  const [brokenJigs, setBrokenJigs] = useState<number | ''>('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +50,12 @@ export function ReportIncident() {
 
       if (!machine || !line) throw new Error('Invalid selection');
 
+      if (machine.jigs > 0 && brokenJigs === '') {
+        setError('Please select the number of broken jigs.');
+        setLoading(false);
+        return;
+      }
+
       // Create new incident
       const incidentRef = await addDoc(collection(db, 'incidents'), {
         lineId: selectedLine,
@@ -56,7 +63,9 @@ export function ReportIncident() {
         machineName: machine.name,
         lineName: line.name,
         reportedBy: user.uid,
+        reportedByName: user.displayName || user.email || 'Unknown',
         assignedTo: machine.defaultMEs || null,
+        brokenJigs: brokenJigs === '' ? null : brokenJigs,
         startTime: serverTimestamp(),
         status: 'open',
       });
@@ -70,6 +79,7 @@ export function ReportIncident() {
       setSuccess(true);
       setSelectedLine('');
       setSelectedMachine('');
+      setBrokenJigs('');
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       console.error('Error reporting incident:', err);
@@ -80,6 +90,7 @@ export function ReportIncident() {
   };
 
   const filteredMachines = machines.filter(m => m.lineId === selectedLine && m.status === 'running');
+  const selectedMachineData = machines.find(m => m.id === selectedMachine);
 
   return (
     <div className="max-w-2xl mx-auto bg-white p-8 rounded-xl shadow-sm border border-gray-100">
@@ -132,7 +143,10 @@ export function ReportIncident() {
           <label className="block text-sm font-medium text-gray-700 mb-2">Machine</label>
           <select
             value={selectedMachine}
-            onChange={(e) => setSelectedMachine(e.target.value)}
+            onChange={(e) => {
+              setSelectedMachine(e.target.value);
+              setBrokenJigs('');
+            }}
             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50 disabled:opacity-50"
             required
             disabled={!selectedLine}
@@ -146,6 +160,23 @@ export function ReportIncident() {
             <p className="text-sm text-gray-500 mt-2">No running machines found on this line.</p>
           )}
         </div>
+
+        {selectedMachineData && selectedMachineData.jigs > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Broken Jigs (Max: {selectedMachineData.jigs})</label>
+            <select
+              value={brokenJigs}
+              onChange={(e) => setBrokenJigs(e.target.value === '' ? '' : parseInt(e.target.value))}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50"
+              required
+            >
+              <option value="">Select broken jigs...</option>
+              {Array.from({ length: selectedMachineData.jigs }, (_, i) => i + 1).map(num => (
+                <option key={num} value={num}>{num}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <button
           type="submit"

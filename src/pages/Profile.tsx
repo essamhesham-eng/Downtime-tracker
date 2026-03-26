@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { updatePassword } from 'firebase/auth';
+import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { User, Lock, CheckCircle, AlertTriangle } from 'lucide-react';
 
 export function Profile() {
   const { user, profile } = useAuth();
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -13,8 +14,13 @@ export function Profile() {
 
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !user.email) return;
     
+    if (!currentPassword) {
+      setError('Please enter your current password');
+      return;
+    }
+
     if (newPassword !== confirmPassword) {
       setError('Passwords do not match');
       return;
@@ -30,13 +36,29 @@ export function Profile() {
     setSuccess('');
 
     try {
+      const isPasswordProvider = user.providerData.some(p => p.providerId === 'password');
+      if (!isPasswordProvider) {
+        setError('Your account uses a different sign-in method. You cannot change your password here.');
+        setLoading(false);
+        return;
+      }
+
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(user, credential);
+
       await updatePassword(user, newPassword);
       setSuccess('Password updated successfully');
+      setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
     } catch (err: any) {
-      console.error('Error updating password:', err);
-      if (err.code === 'auth/requires-recent-login') {
+      if (err.code !== 'auth/wrong-password' && err.code !== 'auth/invalid-credential') {
+        console.error('Error updating password:', err);
+      }
+      
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setError('Incorrect current password.');
+      } else if (err.code === 'auth/requires-recent-login') {
         setError('For security reasons, please sign out and sign back in before changing your password.');
       } else {
         setError(err.message || 'Failed to update password');
@@ -93,6 +115,17 @@ export function Profile() {
 
           <form onSubmit={handleUpdatePassword} className="space-y-4">
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                placeholder="Enter current password"
+                required
+              />
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
               <input
                 type="password"
@@ -116,7 +149,7 @@ export function Profile() {
             </div>
             <button
               type="submit"
-              disabled={loading || !newPassword || !confirmPassword}
+              disabled={loading || !currentPassword || !newPassword || !confirmPassword}
               className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
             >
               {loading ? 'Updating...' : 'Update Password'}

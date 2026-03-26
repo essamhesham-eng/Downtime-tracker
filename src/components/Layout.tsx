@@ -11,12 +11,12 @@ export function Layout() {
   const { activeAlarm, setActiveAlarm } = useAlarmNotification();
 
   const navItems = [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'engineer', 'line_leader', 'maintenance_engineer'] },
-    { path: '/report', label: 'Report Breakdown', icon: AlertTriangle, roles: ['admin', 'line_leader'] },
-    { path: '/incidents', label: 'Active Incidents', icon: Wrench, roles: ['admin', 'maintenance_engineer', 'line_leader', 'manager', 'engineer'] },
-    { path: '/reports', label: 'Export Data', icon: FileSpreadsheet, roles: ['admin', 'manager', 'engineer'] },
+    { path: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer'] },
+    { path: '/report', label: 'Report Breakdown', icon: AlertTriangle, roles: ['admin', 'line_leader', 'pd_engineer'] },
+    { path: '/incidents', label: 'Active Incidents', icon: Wrench, roles: ['admin', 'maintenance_engineer', 'line_leader', 'manager', 'pd_engineer'] },
+    { path: '/reports', label: 'Export Data', icon: FileSpreadsheet, roles: ['admin', 'manager', 'pd_engineer'] },
     { path: '/admin', label: 'Admin Panel', icon: Settings, roles: ['admin'] },
-    { path: '/profile', label: 'Profile', icon: User, roles: ['admin', 'manager', 'engineer', 'line_leader', 'maintenance_engineer'] },
+    { path: '/profile', label: 'Profile', icon: User, roles: ['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer'] },
   ];
 
   const filteredNav = navItems.filter(item => profile?.role && item.roles.includes(profile.role));

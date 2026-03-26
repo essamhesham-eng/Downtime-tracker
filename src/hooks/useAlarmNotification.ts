@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { differenceInMinutes } from 'date-fns';
 
 export function useAlarmNotification() {
   const { profile } = useAuth();
@@ -45,11 +44,29 @@ export function useAlarmNotification() {
 
       const message = `${incident.machineName} on ${incident.lineName} has been down for ${duration} minutes!`;
 
+      // Fix for "Failed to construct 'Notification': Illegal constructor"
       if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Machine Breakdown Alarm', {
-          body: message,
-          icon: '/vite.svg'
-        });
+        try {
+          // Try standard constructor first
+          new Notification('Machine Breakdown Alarm', {
+            body: message,
+            icon: '/vite.svg'
+          });
+        } catch (e) {
+          // Fallback to Service Worker if constructor fails
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.ready.then(registration => {
+              registration.showNotification('Machine Breakdown Alarm', {
+                body: message,
+                icon: '/vite.svg'
+              });
+            }).catch(swErr => {
+              console.error('Service Worker notification failed', swErr);
+            });
+          } else {
+            console.error('Notification failed and no service worker available', e);
+          }
+        }
       }
 
       setActiveAlarm({ message, id: Date.now().toString() });
@@ -59,13 +76,13 @@ export function useAlarmNotification() {
     const checkAlarms = () => {
       const now = new Date();
       currentIncidents.forEach(incident => {
-        // If assigned to someone else, don't notify
-        if (incident.assignedTo && incident.assignedTo.length > 0 && !incident.assignedTo.includes(profile?.uid)) {
+        // If assigned to someone else, don't notify (unless admin)
+        if (profile?.role !== 'admin' && incident.assignedTo && incident.assignedTo.length > 0 && !incident.assignedTo.includes(profile?.uid)) {
           return;
         }
 
         const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-        const duration = differenceInMinutes(now, start);
+        const duration = Math.ceil((now.getTime() - start.getTime()) / 60000);
         
         // Notify at 0, 5, 10, 15... minutes
         const interval = Math.floor(duration / 5);

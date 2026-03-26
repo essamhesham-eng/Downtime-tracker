@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, deleteDoc, getDoc, setDoc } from 'firebase/firestore';
 import { db, firebaseConfig } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Plus, Trash2, UserCog, GripVertical, Mail, Clock, Save, UserPlus } from 'lucide-react';
+import { Settings, Plus, Trash2, UserCog, GripVertical, Mail, Clock, Save, UserPlus, Crown } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { MultiSelect } from '../components/MultiSelect';
 
@@ -16,12 +16,16 @@ export function AdminPanel() {
   const [newLineName, setNewLineName] = useState('');
   const [newMachineName, setNewMachineName] = useState('');
   const [newMachineMEs, setNewMachineMEs] = useState<string[]>([]);
+  const [newMachineIsCritical, setNewMachineIsCritical] = useState(false);
+  const [newMachineJigs, setNewMachineJigs] = useState<number | ''>('');
   const [selectedLineForMachine, setSelectedLineForMachine] = useState('');
   const [itemToDelete, setItemToDelete] = useState<{type: 'line' | 'machine', id: string, name: string} | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
   const [reportTime, setReportTime] = useState('08:00');
   const [reportEmails, setReportEmails] = useState('');
+  const [monthlyReportDay, setMonthlyReportDay] = useState('1');
+  const [monthlyReportTime, setMonthlyReportTime] = useState('08:00');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
 
@@ -43,6 +47,8 @@ export function AdminPanel() {
           const data = docSnap.data();
           if (data.time) setReportTime(data.time);
           if (data.emails) setReportEmails(data.emails.join(', '));
+          if (data.monthlyDay) setMonthlyReportDay(data.monthlyDay.toString());
+          if (data.monthlyTime) setMonthlyReportTime(data.monthlyTime);
         }
       } catch (err) {
         console.error('Error fetching settings:', err);
@@ -114,10 +120,14 @@ export function AdminPanel() {
         currentIncidentId: null,
         order: nextOrder,
         defaultMEs: newMachineMEs.length > 0 ? newMachineMEs : null,
+        isCritical: newMachineIsCritical,
+        jigs: newMachineJigs === '' ? null : newMachineJigs,
         createdAt: serverTimestamp(),
       });
       setNewMachineName('');
       setNewMachineMEs([]);
+      setNewMachineIsCritical(false);
+      setNewMachineJigs('');
       setSelectedLineForMachine('');
     } catch (error) {
       console.error('Error adding machine:', error);
@@ -194,6 +204,8 @@ export function AdminPanel() {
       await setDoc(doc(db, 'settings', 'report'), {
         time: reportTime,
         emails: emailsList,
+        monthlyDay: parseInt(monthlyReportDay),
+        monthlyTime: monthlyReportTime,
         updatedAt: serverTimestamp()
       }, { merge: true });
       setSettingsSuccess(true);
@@ -437,6 +449,22 @@ export function AdminPanel() {
                 placeholder="All MEs (Default)"
                 className="w-full sm:w-48"
               />
+              <select
+                value={newMachineIsCritical ? 'true' : 'false'}
+                onChange={(e) => setNewMachineIsCritical(e.target.value === 'true')}
+                className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="false">Normal</option>
+                <option value="true">Critical</option>
+              </select>
+              <input
+                type="number"
+                min="0"
+                value={newMachineJigs}
+                onChange={(e) => setNewMachineJigs(e.target.value ? parseInt(e.target.value) : '')}
+                placeholder="Jigs (opt)"
+                className="w-24 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
               <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2">
                 <Plus size={18} /> Add
               </button>
@@ -475,8 +503,43 @@ export function AdminPanel() {
                                       <GripVertical size={18} />
                                     </div>
                                     <span className="font-medium text-gray-800">{machine.name}</span>
+                                    {machine.isCritical && <Crown size={16} className="text-yellow-500" />}
                                   </div>
                                   <div className="flex items-center gap-2">
+                                    <select
+                                      value={machine.isCritical ? 'true' : 'false'}
+                                      onChange={async (e) => {
+                                        try {
+                                          await updateDoc(doc(db, 'machines', machine.id), {
+                                            isCritical: e.target.value === 'true'
+                                          });
+                                        } catch (err) {
+                                          console.error('Error updating critical status:', err);
+                                          setErrorMsg('Failed to update critical status.');
+                                        }
+                                      }}
+                                      className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                                    >
+                                      <option value="false">Normal</option>
+                                      <option value="true">Critical</option>
+                                    </select>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={machine.jigs || ''}
+                                      onChange={async (e) => {
+                                        try {
+                                          await updateDoc(doc(db, 'machines', machine.id), {
+                                            jigs: e.target.value ? parseInt(e.target.value) : null
+                                          });
+                                        } catch (err) {
+                                          console.error('Error updating jigs:', err);
+                                          setErrorMsg('Failed to update jigs.');
+                                        }
+                                      }}
+                                      placeholder="Jigs"
+                                      className="w-16 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                                    />
                                     <MultiSelect
                                       options={users.filter(u => u.role === 'maintenance_engineer').map(me => ({ value: me.id, label: me.displayName || me.email }))}
                                       selectedValues={machine.defaultMEs || []}
@@ -522,16 +585,16 @@ export function AdminPanel() {
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
         <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
           <Mail size={20} className="text-blue-600" />
-          Daily Report Settings
+          Report Settings
         </h3>
         <p className="text-sm text-gray-600 mb-4">
-          Configure the time and recipients for the daily data overview email. The report includes incidents from the current month.
+          Configure the time and recipients for the daily and monthly data overview emails. The monthly report will also delete the data from the database.
         </p>
         <form onSubmit={handleSaveSettings} className="space-y-4 max-w-2xl">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                <Clock size={16} /> Send Time (24h format)
+                <Clock size={16} /> Daily Send Time (24h format)
               </label>
               <input
                 type="time"
@@ -554,6 +617,32 @@ export function AdminPanel() {
                 required
               />
               <p className="text-xs text-gray-500 mt-1">Separate multiple emails with commas.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                <Clock size={16} /> Monthly Send Day (1-28)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="28"
+                value={monthlyReportDay}
+                onChange={(e) => setMonthlyReportDay(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                <Clock size={16} /> Monthly Send Time (24h format)
+              </label>
+              <input
+                type="time"
+                value={monthlyReportTime}
+                onChange={(e) => setMonthlyReportTime(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              />
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -631,7 +720,7 @@ export function AdminPanel() {
                       <option value="pending">Pending</option>
                       <option value="line_leader">Line Leader</option>
                       <option value="maintenance_engineer">Maintenance Engineer</option>
-                      <option value="engineer">Engineer</option>
+                      <option value="pd_engineer">PD Engineer</option>
                       <option value="manager">Manager</option>
                       <option value="admin">Admin</option>
                     </select>
@@ -768,7 +857,7 @@ export function AdminPanel() {
                   <option value="pending">Pending</option>
                   <option value="line_leader">Line Leader</option>
                   <option value="maintenance_engineer">Maintenance Engineer</option>
-                  <option value="engineer">Engineer</option>
+                  <option value="pd_engineer">PD Engineer</option>
                   <option value="manager">Manager</option>
                   <option value="admin">Admin</option>
                 </select>

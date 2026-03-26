@@ -5,7 +5,7 @@ import cron from 'node-cron';
 import nodemailer from 'nodemailer';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, collection, getDocs, doc, getDoc, updateDoc, query, where, Timestamp } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, doc, getDoc, updateDoc, deleteDoc, query, where, Timestamp } from 'firebase/firestore';
 import fs from 'fs';
 
 async function startServer() {
@@ -57,7 +57,75 @@ async function startServer() {
       const currentHour = now.getHours().toString().padStart(2, '0');
       const currentMinute = now.getMinutes().toString().padStart(2, '0');
       const currentTimeStr = `${currentHour}:${currentMinute}`;
+      const currentDay = now.getDate();
 
+      // --- MONTHLY REPORT & CLEANUP ---
+      if (settings.monthlyDay && settings.monthlyTime && settings.emails && settings.emails.length > 0) {
+        if (currentDay === settings.monthlyDay && currentTimeStr === settings.monthlyTime) {
+          const currentMonthStr = `${now.getFullYear()}-${now.getMonth() + 1}`;
+          if (settings.lastMonthlySent !== currentMonthStr) {
+            console.log('Time to send monthly report and clean up!');
+            
+            // Fetch all incidents
+            const snapshot = await getDocs(collection(db, 'incidents'));
+            const incidents = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+            // Generate report content
+            let htmlContent = `<h2>Monthly Data Overview & Cleanup</h2>
+              <p>Here is the summary of all incidents up to this point. These records have now been cleared from the database.</p>
+              <table border="1" cellpadding="5" cellspacing="0">
+                <tr>
+                  <th>Machine</th>
+                  <th>Line</th>
+                  <th>Status</th>
+                  <th>Start Time</th>
+                  <th>Duration (mins)</th>
+                  <th>Reported By</th>
+                  <th>Fixed By</th>
+                </tr>`;
+
+            incidents.forEach((inc: any) => {
+              const start = inc.startTime?.toDate ? inc.startTime.toDate() : new Date();
+              htmlContent += `
+                <tr>
+                  <td>${inc.machineName}</td>
+                  <td>${inc.lineName}</td>
+                  <td>${inc.status}</td>
+                  <td>${start.toLocaleString()}</td>
+                  <td>${inc.durationMinutes || 'Ongoing'}</td>
+                  <td>${inc.reportedByName || 'Unknown'}</td>
+                  <td>${inc.resolvedByName || 'N/A'}</td>
+                </tr>
+              `;
+            });
+            htmlContent += `</table>`;
+
+            // Send email
+            if (transporter) {
+              const info = await transporter.sendMail({
+                from: '"Downtime Tracker" <noreply@downtimetracker.com>',
+                to: settings.emails.join(', '),
+                subject: `Monthly Data Export & Cleanup - ${currentMonthStr}`,
+                html: htmlContent,
+              });
+              console.log('Monthly Report sent! Preview URL: %s', nodemailer.getTestMessageUrl(info));
+              
+              // Delete all incidents
+              for (const inc of incidents) {
+                await deleteDoc(doc(db, 'incidents', inc.id));
+              }
+              console.log(`Deleted ${incidents.length} incidents from the database.`);
+
+              // Update lastMonthlySent
+              await updateDoc(doc(db, 'settings', 'report'), {
+                lastMonthlySent: currentMonthStr
+              });
+            }
+          }
+        }
+      }
+
+      // --- DAILY REPORT ---
       if (currentTimeStr === settings.time) {
         // Check if already sent today
         const todayStr = now.toISOString().split('T')[0];
@@ -84,10 +152,12 @@ async function startServer() {
               <th>Status</th>
               <th>Start Time</th>
               <th>Duration (mins)</th>
+              <th>Reported By</th>
+              <th>Fixed By</th>
             </tr>`;
 
-        incidents.forEach(inc => {
-          const start = inc.startTime.toDate();
+        incidents.forEach((inc: any) => {
+          const start = inc.startTime?.toDate ? inc.startTime.toDate() : new Date();
           htmlContent += `
             <tr>
               <td>${inc.machineName}</td>
@@ -95,6 +165,8 @@ async function startServer() {
               <td>${inc.status}</td>
               <td>${start.toLocaleString()}</td>
               <td>${inc.durationMinutes || 'Ongoing'}</td>
+              <td>${inc.reportedByName || 'Unknown'}</td>
+              <td>${inc.resolvedByName || 'N/A'}</td>
             </tr>
           `;
         });

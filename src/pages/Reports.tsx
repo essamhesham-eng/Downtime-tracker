@@ -25,7 +25,7 @@ export function Reports() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!['admin', 'manager', 'engineer'].includes(profile?.role || '')) return;
+    if (!['admin', 'manager', 'pd_engineer'].includes(profile?.role || '')) return;
 
     const fetchData = async () => {
       setLoading(true);
@@ -76,7 +76,7 @@ export function Reports() {
         'Status': incident.status,
         'Start Time': format(start, 'yyyy-MM-dd HH:mm:ss'),
         'End Time': end ? format(end, 'yyyy-MM-dd HH:mm:ss') : 'Ongoing',
-        'Duration (Minutes)': incident.durationMinutes || (end ? Math.round((end.getTime() - start.getTime()) / 60000) : 'Ongoing'),
+        'Duration (Minutes)': incident.durationMinutes || (end ? Math.ceil((end.getTime() - start.getTime()) / 60000) : 'Ongoing'),
         'Cause': incident.cause || 'N/A',
         'Action Taken': incident.action || 'N/A',
         'Reported By': usersMap[incident.reportedBy] || incident.reportedBy,
@@ -144,7 +144,7 @@ export function Reports() {
     }
   };
 
-  if (!['admin', 'manager', 'engineer'].includes(profile?.role || '')) {
+  if (!['admin', 'manager', 'pd_engineer'].includes(profile?.role || '')) {
     return <div className="p-8 text-center text-red-600 font-bold">Access Denied. Managers and Engineers only.</div>;
   }
 
@@ -199,6 +199,7 @@ export function Reports() {
                   <th className="p-4 font-medium">Start Time</th>
                   <th className="p-4 font-medium">Duration</th>
                   <th className="p-4 font-medium">Reported By</th>
+                  <th className="p-4 font-medium">Fixed By</th>
                   {profile?.role === 'admin' && <th className="p-4 font-medium text-right">Actions</th>}
                 </tr>
               </thead>
@@ -224,7 +225,10 @@ export function Reports() {
                         {incident.durationMinutes ? `${incident.durationMinutes} mins` : 'Ongoing'}
                       </td>
                       <td className="p-4 text-gray-600">
-                        {usersMap[incident.reportedBy] || incident.reportedBy}
+                        {incident.reportedByName || usersMap[incident.reportedBy] || incident.reportedBy}
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        {incident.resolvedByName || (incident.resolvedBy ? usersMap[incident.resolvedBy] || incident.resolvedBy : 'N/A')}
                       </td>
                       {profile?.role === 'admin' && (
                         <td className="p-4 text-right">
