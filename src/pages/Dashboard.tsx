@@ -17,6 +17,7 @@ interface Machine {
   currentIncidentId: string | null;
   isCritical?: boolean;
   jigs?: number | null;
+  wip?: number | string | null;
 }
 
 interface Incident {
@@ -25,11 +26,13 @@ interface Incident {
   startTime: any;
   endTime?: any;
   status: 'open' | 'acknowledged' | 'resolved' | 'pending_me_review';
-  brokenJigs?: number | null;
+  breakdownJigs?: number | null;
+  totalJigs?: number | null;
+  type?: string;
 }
 
 export function Dashboard() {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const [lines, setLines] = useState<Line[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -42,6 +45,8 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
+    if (!user) return;
+
     const qLines = query(collection(db, 'lines'), orderBy('createdAt', 'asc'));
     const unsubLines = onSnapshot(qLines, (snapshot) => {
       setLines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Line)));
@@ -69,10 +74,10 @@ export function Dashboard() {
       unsubMachines();
       unsubIncidents();
     };
-  }, []);
+  }, [user]);
 
   const getMachineIncident = (machineId: string) => {
-    return incidents.find(i => i.machineId === machineId && i.status !== 'resolved');
+    return incidents.find(i => i.machineId === machineId && i.status !== 'resolved' && i.type !== 'out_of_order');
   };
 
   const calculateDuration = (startTime: any) => {
@@ -90,6 +95,7 @@ export function Dashboard() {
     
     const machineIncidents = incidents.filter(i => {
       if (i.machineId !== machineId) return false;
+      if (i.type === 'out_of_order') return false; // Exclude out of order incidents
       if (!i.startTime) return false;
       const start = i.startTime.toDate ? i.startTime.toDate() : new Date(i.startTime);
       return start >= sevenDaysAgo;
@@ -167,6 +173,18 @@ export function Dashboard() {
                       
                       return (
                         <div key={machine.id} className="flex items-center">
+                          {/* Connector line and WIP before the machine */}
+                          {(index > 0 || (machine.wip !== undefined && machine.wip !== null && machine.wip !== '')) && (
+                            <div className="flex flex-col items-center justify-center relative mx-1 w-8 h-12">
+                              {machine.wip !== undefined && machine.wip !== null && machine.wip !== '' && (
+                                <span className="absolute -top-4 text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 shadow-sm whitespace-nowrap z-10">
+                                  WIP: {machine.wip}
+                                </span>
+                              )}
+                              <div className="w-full h-1 bg-gray-200 rounded-full"></div>
+                            </div>
+                          )}
+                          
                           <div className="flex flex-col items-center group relative">
                             <div 
                               className={`w-12 h-12 rounded-full flex items-center justify-center text-white shadow-md transition-transform transform hover:scale-105 relative ${
@@ -201,19 +219,14 @@ export function Dashboard() {
                                 <span className="text-xs font-bold text-red-600">
                                   {duration}m
                                 </span>
-                                {incident?.brokenJigs && (
+                                {incident?.breakdownJigs != null && (
                                   <span className="text-[10px] font-semibold text-orange-600 bg-orange-100 px-1.5 py-0.5 rounded-full mt-0.5">
-                                    {incident.brokenJigs}{machine.jigs ? `/${machine.jigs}` : ''} Jigs
+                                    {incident.breakdownJigs}{incident.totalJigs ? `/${incident.totalJigs}` : ''} Jigs
                                   </span>
                                 )}
                               </div>
                             )}
                           </div>
-                          
-                          {/* Connector line between machines */}
-                          {index < lineMachines.length - 1 && (
-                            <div className="w-8 h-1 bg-gray-200 mx-1 rounded-full"></div>
-                          )}
                         </div>
                       );
                     })

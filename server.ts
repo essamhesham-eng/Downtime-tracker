@@ -8,6 +8,14 @@ import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, getDocs, doc, getDoc, updateDoc, deleteDoc, query, where, Timestamp } from 'firebase/firestore';
 import fs from 'fs';
 
+const formatName = (name: string) => {
+  if (!name) return 'Unknown';
+  if (name.includes('@')) {
+    return name.split('@')[0];
+  }
+  return name;
+};
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -80,6 +88,7 @@ async function startServer() {
                   <th>Status</th>
                   <th>Start Time</th>
                   <th>Duration (mins)</th>
+                  <th>Reason Code</th>
                   <th>Reported By</th>
                   <th>Fixed By</th>
                 </tr>`;
@@ -93,8 +102,9 @@ async function startServer() {
                   <td>${inc.status}</td>
                   <td>${start.toLocaleString()}</td>
                   <td>${inc.durationMinutes || 'Ongoing'}</td>
-                  <td>${inc.reportedByName || 'Unknown'}</td>
-                  <td>${inc.resolvedByName || 'N/A'}</td>
+                  <td>${inc.reasonCode || 'N/A'}</td>
+                  <td>${formatName(inc.reportedByName || 'Unknown')}</td>
+                  <td>${formatName(inc.resolvedByName || 'N/A')}</td>
                 </tr>
               `;
             });
@@ -152,6 +162,7 @@ async function startServer() {
               <th>Status</th>
               <th>Start Time</th>
               <th>Duration (mins)</th>
+              <th>Reason Code</th>
               <th>Reported By</th>
               <th>Fixed By</th>
             </tr>`;
@@ -165,8 +176,9 @@ async function startServer() {
               <td>${inc.status}</td>
               <td>${start.toLocaleString()}</td>
               <td>${inc.durationMinutes || 'Ongoing'}</td>
-              <td>${inc.reportedByName || 'Unknown'}</td>
-              <td>${inc.resolvedByName || 'N/A'}</td>
+              <td>${inc.reasonCode || 'N/A'}</td>
+              <td>${formatName(inc.reportedByName || 'Unknown')}</td>
+              <td>${formatName(inc.resolvedByName || 'N/A')}</td>
             </tr>
           `;
         });

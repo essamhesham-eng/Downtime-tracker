@@ -19,6 +19,7 @@
       "type": "object",
       "properties": {
         "name": { "type": "string" },
+        "allowOutOfOrder": { "type": "boolean", "description": "Whether this line allows reporting 'out of order' incidents" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "createdAt"]
@@ -36,9 +37,11 @@
         "defaultMEs": { "type": ["array", "null"], "items": { "type": "string" } },
         "isCritical": { "type": "boolean" },
         "jigs": { "type": ["number", "null"] },
+        "wip": { "type": ["number", "string", "null"] },
+        "category": { "type": "string", "enum": ["assembly", "test", "packing"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["lineId", "name", "status", "createdAt"]
+      "required": ["lineId", "name", "status", "category", "createdAt"]
     },
     "Incident": {
       "title": "Downtime Incident",
@@ -60,7 +63,8 @@
         "resolvedByName": { "type": ["string", "null"] },
         "durationMinutes": { "type": ["number", "null"] },
         "assignedTo": { "type": ["array", "null"], "items": { "type": "string" } },
-        "brokenJigs": { "type": ["number", "null"] }
+        "breakdownJigs": { "type": ["number", "null"] },
+        "totalJigs": { "type": ["number", "null"] }
       },
       "required": ["lineId", "machineId", "machineName", "lineName", "reportedBy", "startTime", "status"]
     },

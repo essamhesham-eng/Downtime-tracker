@@ -16,6 +16,8 @@ export function ReportIncident() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!user) return;
+
     const qLines = query(collection(db, 'lines'), orderBy('createdAt', 'asc'));
     const unsubLines = onSnapshot(qLines, (snapshot) => {
       setLines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -37,7 +39,7 @@ export function ReportIncident() {
       unsubLines();
       unsubMachines();
     };
-  }, []);
+  }, [user]);
 
   const handleReport = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,8 +66,10 @@ export function ReportIncident() {
         lineName: line.name,
         reportedBy: user.uid,
         reportedByName: user.displayName || user.email || 'Unknown',
-        assignedTo: machine.defaultMEs || null,
-        brokenJigs: brokenJigs === '' ? null : brokenJigs,
+        assignedTo: null,
+        assignedGroups: machine.assignedGroups || null,
+        totalJigs: machine.jigs || null,
+        breakdownJigs: brokenJigs === '' ? null : brokenJigs,
         startTime: serverTimestamp(),
         status: 'open',
       });
@@ -128,6 +132,7 @@ export function ReportIncident() {
             onChange={(e) => {
               setSelectedLine(e.target.value);
               setSelectedMachine('');
+              setBrokenJigs('');
             }}
             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50"
             required
@@ -137,6 +142,12 @@ export function ReportIncident() {
               <option key={line.id} value={line.id}>{line.name}</option>
             ))}
           </select>
+          {selectedLine && lines.find(l => l.id === selectedLine)?.allowOutOfOrder && (
+            <p className="text-xs text-amber-600 mt-2 font-medium flex items-center gap-1">
+              <AlertTriangle size={12} />
+              "Out of Order" reporting is enabled for this line.
+            </p>
+          )}
         </div>
 
         <div>
@@ -178,18 +189,78 @@ export function ReportIncident() {
           </div>
         )}
 
-        <button
-          type="submit"
-          disabled={loading || !selectedLine || !selectedMachine}
-          className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex justify-center items-center gap-2"
-        >
-          {loading ? 'Reporting...' : (
-            <>
-              <AlertTriangle size={20} />
-              CALL MAINTENANCE
-            </>
+        <div className="flex flex-col gap-4">
+          <button
+            type="submit"
+            disabled={loading || !selectedLine || !selectedMachine}
+            className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex justify-center items-center gap-2"
+          >
+            {loading ? 'Reporting...' : (
+              <>
+                <AlertTriangle size={20} />
+                CALL MAINTENANCE
+              </>
+            )}
+          </button>
+          
+          {lines.find(l => l.id === selectedLine)?.allowOutOfOrder && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!selectedLine || !selectedMachine || !user) return;
+                setLoading(true);
+                try {
+                  const machine = machines.find(m => m.id === selectedMachine);
+                  const line = lines.find(l => l.id === selectedLine);
+                  if (!machine || !line) throw new Error('Invalid selection');
+                  if (machine.jigs > 0 && brokenJigs === '') {
+                    setError('Please select the number of broken jigs.');
+                    setLoading(false);
+                    return;
+                  }
+                  const incidentRef = await addDoc(collection(db, 'incidents'), {
+                    lineId: selectedLine,
+                    machineId: selectedMachine,
+                    machineName: machine.name,
+                    lineName: line.name,
+                    reportedBy: user.uid,
+                    reportedByName: user.displayName || user.email || 'Unknown',
+                    assignedTo: null,
+                    assignedGroups: machine.assignedGroups || null,
+                    totalJigs: machine.jigs || null,
+                    breakdownJigs: brokenJigs === '' ? null : brokenJigs,
+                    startTime: serverTimestamp(),
+                    status: 'open',
+                    type: 'out_of_order'
+                  });
+                  await updateDoc(doc(db, 'machines', selectedMachine), {
+                    status: 'down',
+                    currentIncidentId: incidentRef.id,
+                  });
+                  setSuccess(true);
+                  setSelectedLine('');
+                  setSelectedMachine('');
+                  setBrokenJigs('');
+                  setTimeout(() => setSuccess(false), 3000);
+                } catch (err) {
+                  console.error('Error reporting out of order:', err);
+                  setError('Failed to report out of order.');
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading || !selectedLine || !selectedMachine}
+              className="w-full py-4 bg-yellow-500 hover:bg-yellow-600 text-white font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex justify-center items-center gap-2"
+            >
+              {loading ? 'Reporting...' : (
+                <>
+                  <AlertTriangle size={20} />
+                  OUT OF ORDER
+                </>
+              )}
+            </button>
           )}
-        </button>
+        </div>
       </form>
     </div>
   );

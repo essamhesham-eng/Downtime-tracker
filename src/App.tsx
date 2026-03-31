@@ -13,10 +13,12 @@ import { IncidentsList } from './pages/IncidentsList';
 import { AdminPanel } from './pages/AdminPanel';
 import { Reports } from './pages/Reports';
 import { Profile } from './pages/Profile';
+import { Analysis } from './pages/Analysis';
+import { WIP } from './pages/WIP';
 import { Wrench } from 'lucide-react';
 
-function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode, allowedRoles?: string[] }) {
-  const { user, profile, loading, signOut } = useAuth();
+function ProtectedRoute({ children, requiredPermission }: { children: React.ReactNode, requiredPermission?: string }) {
+  const { user, profile, loading, permissions, signOut } = useAuth();
 
   if (loading) {
     return (
@@ -48,8 +50,11 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
     );
   }
 
-  if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
-    return <Navigate to="/" />;
+  if (requiredPermission && profile) {
+    const rolePerms = permissions[profile.role] || [];
+    if (!rolePerms.includes(requiredPermission)) {
+      return <Navigate to="/" />;
+    }
   }
 
   return <>{children}</>;
@@ -145,29 +150,39 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       
       <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-        <Route index element={<Dashboard />} />
+        <Route index element={<ProtectedRoute requiredPermission="dashboard"><Dashboard /></ProtectedRoute>} />
         <Route path="report" element={
-          <ProtectedRoute allowedRoles={['admin', 'line_leader', 'pd_engineer']}>
+          <ProtectedRoute requiredPermission="report">
             <ReportIncident />
           </ProtectedRoute>
         } />
         <Route path="incidents" element={
-          <ProtectedRoute allowedRoles={['admin', 'maintenance_engineer', 'line_leader', 'manager', 'pd_engineer']}>
+          <ProtectedRoute requiredPermission="incidents">
             <IncidentsList />
           </ProtectedRoute>
         } />
         <Route path="reports" element={
-          <ProtectedRoute allowedRoles={['admin', 'manager', 'pd_engineer']}>
+          <ProtectedRoute requiredPermission="reports">
             <Reports />
           </ProtectedRoute>
         } />
+        <Route path="analysis" element={
+          <ProtectedRoute requiredPermission="analysis">
+            <Analysis />
+          </ProtectedRoute>
+        } />
+        <Route path="wip" element={
+          <ProtectedRoute requiredPermission="wip">
+            <WIP />
+          </ProtectedRoute>
+        } />
         <Route path="profile" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermission="profile">
             <Profile />
           </ProtectedRoute>
         } />
         <Route path="admin" element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute requiredPermission="admin">
             <AdminPanel />
           </ProtectedRoute>
         } />

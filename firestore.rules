@@ -128,26 +128,30 @@ service cloud.firestore {
     }
 
     function isValidLine(data) {
-      return hasOnlyAllowedFields(['name', 'createdAt', 'id', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['name', 'createdAt', 'id', 'updatedAt', 'allowOutOfOrder']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('allowOutOfOrder' in data) || data.allowOutOfOrder is bool) &&
              (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     function isValidMachine(data) {
-      return hasOnlyAllowedFields(['lineId', 'name', 'status', 'currentIncidentId', 'createdAt', 'order', 'id', 'updatedAt', 'defaultMEs', 'isCritical', 'jigs']) &&
+      return hasOnlyAllowedFields(['lineId', 'name', 'status', 'currentIncidentId', 'createdAt', 'order', 'id', 'updatedAt', 'defaultMEs', 'assignedGroups', 'isCritical', 'jigs', 'category', 'wip']) &&
              data.lineId is string && data.lineId.size() > 0 && data.lineId.size() < 100 &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.status in ['running', 'down'] &&
              (!('currentIncidentId' in data) || data.currentIncidentId == null || (data.currentIncidentId is string && data.currentIncidentId.size() < 100)) &&
              (!('order' in data) || data.order == null || data.order is number) &&
              (!('defaultMEs' in data) || data.defaultMEs == null || (data.defaultMEs is list && data.defaultMEs.size() < 100)) &&
+             (!('assignedGroups' in data) || data.assignedGroups == null || (data.assignedGroups is list && data.assignedGroups.size() < 100)) &&
              (!('isCritical' in data) || data.isCritical is bool) &&
              (!('jigs' in data) || data.jigs == null || data.jigs is number) &&
+             (!('category' in data) || data.category == null || data.category in ['assembly', 'test', 'packing']) &&
+             (!('wip' in data) || data.wip == null || data.wip is number || data.wip is string) &&
              (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     function isValidIncident(data) {
-      return hasOnlyAllowedFields(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'reportedByName', 'startTime', 'endTime', 'status', 'acknowledgedBy', 'acknowledgedAt', 'resolvedBy', 'resolvedByName', 'durationMinutes', 'id', 'updatedAt', 'cause', 'action', 'reviewedBy', 'reviewedAt', 'assignedTo', 'assignedGroups', 'brokenJigs']) &&
+      return hasOnlyAllowedFields(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'reportedByName', 'startTime', 'endTime', 'status', 'acknowledgedBy', 'acknowledgedAt', 'resolvedBy', 'resolvedByName', 'durationMinutes', 'id', 'updatedAt', 'cause', 'action', 'reviewedBy', 'reviewedAt', 'assignedTo', 'assignedGroups', 'breakdownJigs', 'totalJigs', 'type', 'causeImageUrl', 'actionImageUrl', 'reasonCode']) &&
              data.lineId is string && data.lineId.size() > 0 && data.lineId.size() < 100 &&
              data.machineId is string && data.machineId.size() > 0 && data.machineId.size() < 100 &&
              data.machineName is string && data.machineName.size() > 0 && data.machineName.size() < 100 &&
@@ -168,7 +172,12 @@ service cloud.firestore {
              (!('reviewedAt' in data) || data.reviewedAt == null || data.reviewedAt is timestamp) &&
              (!('assignedTo' in data) || data.assignedTo == null || (data.assignedTo is list && data.assignedTo.size() < 100)) &&
              (!('assignedGroups' in data) || data.assignedGroups == null || (data.assignedGroups is list && data.assignedGroups.size() < 100)) &&
-             (!('brokenJigs' in data) || data.brokenJigs == null || data.brokenJigs is number);
+             (!('breakdownJigs' in data) || data.breakdownJigs == null || data.breakdownJigs is number) &&
+             (!('totalJigs' in data) || data.totalJigs == null || data.totalJigs is number) &&
+             (!('type' in data) || data.type == null || (data.type is string && data.type.size() < 100)) &&
+             (!('causeImageUrl' in data) || data.causeImageUrl == null || (data.causeImageUrl is string && data.causeImageUrl.size() < 2000)) &&
+             (!('actionImageUrl' in data) || data.actionImageUrl == null || (data.actionImageUrl is string && data.actionImageUrl.size() < 2000)) &&
+             (!('reasonCode' in data) || data.reasonCode == null || (data.reasonCode is string && data.reasonCode.size() < 100));
     }
 
     function isManagerOrAdmin() {
@@ -176,6 +185,20 @@ service cloud.firestore {
         getUserData().role == 'manager' ||
         getUserData().role == 'pd_engineer'
       ));
+    }
+
+    function isValidReasonCode(data) {
+      return hasOnlyAllowedFields(['code', 'description', 'id', 'createdAt', 'updatedAt']) &&
+             data.code is string && data.code.size() > 0 && data.code.size() < 100 &&
+             data.description is string && data.description.size() > 0 && data.description.size() < 500 &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function isValidGroup(data) {
+      return hasOnlyAllowedFields(['name', 'userIds', 'id', 'createdAt', 'updatedAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('userIds' in data) || data.userIds == null || (data.userIds is list && data.userIds.size() < 500)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     match /invitations/{email} {
@@ -210,7 +233,7 @@ service cloud.firestore {
       allow create: if isAdmin() && isValidMachine(request.resource.data);
       allow update: if isAuthenticated() && isValidMachine(request.resource.data) && (
         (isAdmin() && areImmutableFieldsUnchanged(['createdAt'])) ||
-        (!isAdmin() && areImmutableFieldsUnchanged(['createdAt', 'lineId', 'name', 'order', 'defaultMEs', 'isCritical', 'jigs']))
+        (!isAdmin() && areImmutableFieldsUnchanged(['createdAt', 'lineId', 'name', 'order', 'defaultMEs', 'assignedGroups', 'isCritical', 'jigs']))
       );
       allow delete: if isAdmin();
     }
@@ -219,7 +242,9 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidIncident(request.resource.data) && request.resource.data.reportedBy == request.auth.uid;
       allow update: if isAuthenticated() && isValidIncident(request.resource.data) && (
-        isManagerOrAdmin() || areImmutableFieldsUnchanged(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'reportedByName', 'startTime', 'assignedTo', 'assignedGroups'])
+        isManagerOrAdmin() || 
+        (isLineLeader() && request.resource.data.type == 'out_of_order' && areImmutableFieldsUnchanged(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'reportedByName', 'startTime', 'assignedTo', 'assignedGroups', 'type'])) ||
+        areImmutableFieldsUnchanged(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'reportedByName', 'startTime', 'assignedTo', 'assignedGroups'])
       );
       allow delete: if isAdmin();
     }
@@ -231,7 +256,16 @@ service cloud.firestore {
 
     match /groups/{groupId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow create: if isAdmin() && isValidGroup(request.resource.data);
+      allow update: if isAdmin() && isValidGroup(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
+      allow delete: if isAdmin();
+    }
+
+    match /reasonCodes/{codeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidReasonCode(request.resource.data);
+      allow update: if isAdmin() && isValidReasonCode(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
+      allow delete: if isAdmin();
     }
   }
 }

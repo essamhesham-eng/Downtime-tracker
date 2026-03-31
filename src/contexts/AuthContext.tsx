@@ -14,10 +14,24 @@ export interface UserProfile {
   createdAt: any;
 }
 
+export interface RolePermissions {
+  [role: string]: string[];
+}
+
+export const DEFAULT_PERMISSIONS: RolePermissions = {
+  admin: ['dashboard', 'report', 'incidents', 'analysis', 'reports', 'admin', 'profile', 'wip'],
+  manager: ['dashboard', 'incidents', 'analysis', 'reports', 'profile', 'wip'],
+  pd_engineer: ['dashboard', 'report', 'incidents', 'analysis', 'reports', 'profile', 'wip'],
+  line_leader: ['dashboard', 'report', 'incidents', 'profile', 'wip'],
+  maintenance_engineer: ['dashboard', 'incidents', 'profile', 'wip'],
+  pending: []
+};
+
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
+  permissions: RolePermissions;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -29,6 +43,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [permissions, setPermissions] = useState<RolePermissions>(DEFAULT_PERMISSIONS);
+
+  useEffect(() => {
+    if (!user) {
+      setPermissions(DEFAULT_PERMISSIONS);
+      return;
+    }
+    let unsub: (() => void) | undefined;
+    let isMounted = true;
+    import('firebase/firestore').then(({ onSnapshot, doc }) => {
+      if (!isMounted) return;
+      unsub = onSnapshot(doc(db, 'settings', 'permissions'), (snapshot) => {
+        if (snapshot.exists()) {
+          const dbPerms = snapshot.data();
+          // Ensure admin always has access to admin panel and wip if they were added later
+          if (dbPerms.admin) {
+            if (!dbPerms.admin.includes('admin')) dbPerms.admin.push('admin');
+            if (!dbPerms.admin.includes('wip')) dbPerms.admin.push('wip');
+          }
+          setPermissions({ ...DEFAULT_PERMISSIONS, ...dbPerms });
+        } else {
+          setPermissions(DEFAULT_PERMISSIONS);
+        }
+      });
+    });
+    return () => {
+      isMounted = false;
+      if (unsub) unsub();
+    };
+  }, [user]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -126,7 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signInWithEmail, signUpWithEmail, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, permissions, signInWithEmail, signUpWithEmail, signOut }}>
       {children}
     </AuthContext.Provider>
   );

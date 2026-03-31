@@ -1,25 +1,31 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, AlertTriangle, Settings, FileSpreadsheet, LogOut, Wrench, User } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, Settings, FileSpreadsheet, LogOut, Wrench, User, LineChart, ClipboardList } from 'lucide-react';
 import { useAlarmNotification } from '../hooks/useAlarmNotification';
 
 export function Layout() {
-  const { profile, signOut } = useAuth();
+  const { profile, permissions, signOut } = useAuth();
   const location = useLocation();
   
   const { activeAlarm, setActiveAlarm } = useAlarmNotification();
 
   const navItems = [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer'] },
-    { path: '/report', label: 'Report Breakdown', icon: AlertTriangle, roles: ['admin', 'line_leader', 'pd_engineer'] },
-    { path: '/incidents', label: 'Active Incidents', icon: Wrench, roles: ['admin', 'maintenance_engineer', 'line_leader', 'manager', 'pd_engineer'] },
-    { path: '/reports', label: 'Export Data', icon: FileSpreadsheet, roles: ['admin', 'manager', 'pd_engineer'] },
-    { path: '/admin', label: 'Admin Panel', icon: Settings, roles: ['admin'] },
-    { path: '/profile', label: 'Profile', icon: User, roles: ['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer'] },
+    { path: '/', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard' },
+    { path: '/report', label: 'Report Breakdown', icon: AlertTriangle, permission: 'report' },
+    { path: '/incidents', label: 'Active Incidents', icon: Wrench, permission: 'incidents' },
+    { path: '/wip', label: 'WIP', icon: ClipboardList, permission: 'wip' },
+    { path: '/analysis', label: 'Analysis', icon: LineChart, permission: 'analysis' },
+    { path: '/reports', label: 'Export Data', icon: FileSpreadsheet, permission: 'reports' },
+    { path: '/admin', label: 'Admin Panel', icon: Settings, permission: 'admin' },
+    { path: '/profile', label: 'Profile', icon: User, permission: 'profile' },
   ];
 
-  const filteredNav = navItems.filter(item => profile?.role && item.roles.includes(profile.role));
+  const filteredNav = navItems.filter(item => {
+    if (!profile?.role) return false;
+    const rolePerms = permissions[profile.role] || [];
+    return rolePerms.includes(item.permission);
+  });
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row">

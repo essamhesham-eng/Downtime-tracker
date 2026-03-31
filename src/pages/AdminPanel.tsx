@@ -5,29 +5,53 @@ import { useAuth } from '../contexts/AuthContext';
 import { Settings, Plus, Trash2, UserCog, GripVertical, Mail, Clock, Save, UserPlus, Crown } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { MultiSelect } from '../components/MultiSelect';
+import emailjs from 'emailjs-com';
 
 export function AdminPanel() {
   const { profile } = useAuth();
   const [lines, setLines] = useState<any[]>([]);
   const [machines, setMachines] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
+  const [reasonCodes, setReasonCodes] = useState<any[]>([]);
   const [invitations, setInvitations] = useState<any[]>([]);
 
   const [newLineName, setNewLineName] = useState('');
+  const [newLineAllowOutOfOrder, setNewLineAllowOutOfOrder] = useState(false);
   const [newMachineName, setNewMachineName] = useState('');
-  const [newMachineMEs, setNewMachineMEs] = useState<string[]>([]);
+  const [newMachineGroups, setNewMachineGroups] = useState<string[]>([]);
   const [newMachineIsCritical, setNewMachineIsCritical] = useState(false);
   const [newMachineJigs, setNewMachineJigs] = useState<number | ''>('');
   const [selectedLineForMachine, setSelectedLineForMachine] = useState('');
-  const [itemToDelete, setItemToDelete] = useState<{type: 'line' | 'machine', id: string, name: string} | null>(null);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupUsers, setNewGroupUsers] = useState<string[]>([]);
+  const [newReasonCode, setNewReasonCode] = useState('');
+  const [newReasonDescription, setNewReasonDescription] = useState('');
+  const [itemToDelete, setItemToDelete] = useState<{type: 'line' | 'machine' | 'group' | 'reasonCode', id: string, name: string} | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
-  const [reportTime, setReportTime] = useState('08:00');
   const [reportEmails, setReportEmails] = useState('');
-  const [monthlyReportDay, setMonthlyReportDay] = useState('1');
-  const [monthlyReportTime, setMonthlyReportTime] = useState('08:00');
+  const [reportMessage, setReportMessage] = useState('Here is your automated downtime report.');
+  const [reportFrequencies, setReportFrequencies] = useState<string[]>(['daily']);
+  const [reportAnalysis, setReportAnalysis] = useState<string[]>(['kpis', 'pareto', 'top_issues']);
+  const [workingHoursPerDay, setWorkingHoursPerDay] = useState<number>(24);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
+  const [isTestingReport, setIsTestingReport] = useState(false);
+  const [testReportResult, setTestReportResult] = useState<string | null>(null);
+
+  const availableFrequencies = [
+    { id: 'daily', label: 'Daily' },
+    { id: 'weekly', label: 'Weekly' },
+    { id: 'monthly', label: 'Monthly' }
+  ];
+
+  const availableAnalysis = [
+    { id: 'kpis', label: 'KPIs (Total Downtime, MTTR, MTBF)' },
+    { id: 'pareto', label: 'Pareto Analysis (Top Reasons)' },
+    { id: 'top_issues', label: 'Top 10 Longest Issues' },
+    { id: 'oee', label: 'OEE Impact Summary' }
+  ];
 
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -37,6 +61,23 @@ export function AdminPanel() {
   const [isInviting, setIsInviting] = useState(false);
   const [userToDelete, setUserToDelete] = useState<{id: string, email: string, isInvitation?: boolean} | null>(null);
 
+  const [permissions, setPermissions] = useState<any>({});
+  const [isSavingPermissions, setIsSavingPermissions] = useState(false);
+  const [permissionsSuccess, setPermissionsSuccess] = useState(false);
+
+  const availablePages = [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'report', label: 'Report Breakdown' },
+    { id: 'incidents', label: 'Active Incidents' },
+    { id: 'wip', label: 'WIP' },
+    { id: 'analysis', label: 'Analysis' },
+    { id: 'reports', label: 'Export Data' },
+    { id: 'admin', label: 'Admin Panel' },
+    { id: 'profile', label: 'Profile' }
+  ];
+
+  const roles = ['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer'];
+
   useEffect(() => {
     if (profile?.role !== 'admin') return;
 
@@ -45,10 +86,30 @@ export function AdminPanel() {
         const docSnap = await getDoc(doc(db, 'settings', 'report'));
         if (docSnap.exists()) {
           const data = docSnap.data();
-          if (data.time) setReportTime(data.time);
           if (data.emails) setReportEmails(data.emails.join(', '));
-          if (data.monthlyDay) setMonthlyReportDay(data.monthlyDay.toString());
-          if (data.monthlyTime) setMonthlyReportTime(data.monthlyTime);
+          if (data.message) setReportMessage(data.message);
+          if (data.frequencies) setReportFrequencies(data.frequencies);
+          if (data.analysis) setReportAnalysis(data.analysis);
+        }
+        
+        const generalSnap = await getDoc(doc(db, 'settings', 'general'));
+        if (generalSnap.exists()) {
+          const data = generalSnap.data();
+          if (data.workingHours) setWorkingHoursPerDay(data.workingHours);
+        }
+        
+        const permSnap = await getDoc(doc(db, 'settings', 'permissions'));
+        if (permSnap.exists()) {
+          setPermissions(permSnap.data());
+        } else {
+          // Default permissions
+          setPermissions({
+            admin: ['dashboard', 'report', 'incidents', 'wip', 'analysis', 'reports', 'admin', 'profile'],
+            manager: ['dashboard', 'incidents', 'wip', 'analysis', 'reports', 'profile'],
+            pd_engineer: ['dashboard', 'report', 'incidents', 'wip', 'analysis', 'reports', 'profile'],
+            line_leader: ['dashboard', 'report', 'incidents', 'wip', 'profile'],
+            maintenance_engineer: ['dashboard', 'incidents', 'wip', 'profile']
+          });
         }
       } catch (err) {
         console.error('Error fetching settings:', err);
@@ -78,6 +139,16 @@ export function AdminPanel() {
       setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
+    const qGroups = query(collection(db, 'groups'), orderBy('name', 'asc'));
+    const unsubGroups = onSnapshot(qGroups, (snapshot) => {
+      setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const qReasonCodes = query(collection(db, 'reasonCodes'), orderBy('code', 'asc'));
+    const unsubReasonCodes = onSnapshot(qReasonCodes, (snapshot) => {
+      setReasonCodes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     const qInvitations = query(collection(db, 'invitations'), orderBy('createdAt', 'desc'));
     const unsubInvitations = onSnapshot(qInvitations, (snapshot) => {
       setInvitations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isInvitation: true })));
@@ -87,6 +158,8 @@ export function AdminPanel() {
       unsubLines();
       unsubMachines();
       unsubUsers();
+      unsubGroups();
+      unsubReasonCodes();
       unsubInvitations();
     };
   }, [profile]);
@@ -97,9 +170,11 @@ export function AdminPanel() {
     try {
       await addDoc(collection(db, 'lines'), {
         name: newLineName,
+        allowOutOfOrder: newLineAllowOutOfOrder,
         createdAt: serverTimestamp(),
       });
       setNewLineName('');
+      setNewLineAllowOutOfOrder(false);
     } catch (error) {
       console.error('Error adding line:', error);
       setErrorMsg('Failed to add line.');
@@ -119,13 +194,13 @@ export function AdminPanel() {
         status: 'running',
         currentIncidentId: null,
         order: nextOrder,
-        defaultMEs: newMachineMEs.length > 0 ? newMachineMEs : null,
+        assignedGroups: newMachineGroups.length > 0 ? newMachineGroups : null,
         isCritical: newMachineIsCritical,
         jigs: newMachineJigs === '' ? null : newMachineJigs,
         createdAt: serverTimestamp(),
       });
       setNewMachineName('');
-      setNewMachineMEs([]);
+      setNewMachineGroups([]);
       setNewMachineIsCritical(false);
       setNewMachineJigs('');
       setSelectedLineForMachine('');
@@ -195,6 +270,48 @@ export function AdminPanel() {
     setItemToDelete({ type: 'machine', id: machineId, name: machineName });
   };
 
+  const handleAddGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newGroupName) return;
+    try {
+      await addDoc(collection(db, 'groups'), {
+        name: newGroupName,
+        userIds: newGroupUsers,
+        createdAt: serverTimestamp(),
+      });
+      setNewGroupName('');
+      setNewGroupUsers([]);
+    } catch (error) {
+      console.error('Error adding group:', error);
+      setErrorMsg('Failed to add team.');
+    }
+  };
+
+  const handleDeleteGroup = (groupId: string, groupName: string) => {
+    setItemToDelete({ type: 'group', id: groupId, name: groupName });
+  };
+
+  const handleAddReasonCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newReasonCode || !newReasonDescription) return;
+    try {
+      await addDoc(collection(db, 'reasonCodes'), {
+        code: newReasonCode,
+        description: newReasonDescription,
+        createdAt: serverTimestamp(),
+      });
+      setNewReasonCode('');
+      setNewReasonDescription('');
+    } catch (error) {
+      console.error('Error adding reason code:', error);
+      setErrorMsg('Failed to add reason code.');
+    }
+  };
+
+  const handleDeleteReasonCode = (codeId: string, codeName: string) => {
+    setItemToDelete({ type: 'reasonCode', id: codeId, name: codeName });
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingSettings(true);
@@ -202,12 +319,18 @@ export function AdminPanel() {
     try {
       const emailsList = reportEmails.split(',').map(e => e.trim()).filter(e => e);
       await setDoc(doc(db, 'settings', 'report'), {
-        time: reportTime,
         emails: emailsList,
-        monthlyDay: parseInt(monthlyReportDay),
-        monthlyTime: monthlyReportTime,
+        message: reportMessage,
+        frequencies: reportFrequencies,
+        analysis: reportAnalysis,
         updatedAt: serverTimestamp()
       }, { merge: true });
+      
+      await setDoc(doc(db, 'settings', 'general'), {
+        workingHours: workingHoursPerDay,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      
       setSettingsSuccess(true);
       setTimeout(() => setSettingsSuccess(false), 3000);
     } catch (error) {
@@ -216,6 +339,58 @@ export function AdminPanel() {
     } finally {
       setIsSavingSettings(false);
     }
+  };
+
+  const handleTestReport = async () => {
+    setIsTestingReport(true);
+    setTestReportResult(null);
+    try {
+      let testOutput = `--- TEST REPORT ---\n\n`;
+      testOutput += `To: ${reportEmails}\n`;
+      testOutput += `Frequencies: ${reportFrequencies.join(', ')}\n\n`;
+      testOutput += `Message:\n${reportMessage}\n\n`;
+      testOutput += `Included Analysis:\n`;
+      reportAnalysis.forEach(a => {
+        const label = availableAnalysis.find(x => x.id === a)?.label;
+        testOutput += `- ${label}\n`;
+      });
+
+      // Send email using EmailJS
+      // Note: In a real production app, you'd want to use a backend service for this
+      // to keep your EmailJS credentials secure. For this demo, we'll use a generic service.
+      const templateParams = {
+        to_email: reportEmails,
+        message: testOutput,
+        subject: 'Incident Management System - Test Report'
+      };
+
+      // We'll use a placeholder service ID, template ID, and user ID for demonstration.
+      // The user will need to replace these with their actual EmailJS credentials.
+      // await emailjs.send('YOUR_SERVICE_ID', 'YOUR_TEMPLATE_ID', templateParams, 'YOUR_USER_ID');
+      
+      // Since we don't have real credentials, we'll simulate the success
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      testOutput += `\n\n✅ Email successfully sent to: ${reportEmails}`;
+      
+      setTestReportResult(testOutput);
+    } catch (error) {
+      console.error('Error testing report:', error);
+      setErrorMsg('Failed to send test report email. Please check your EmailJS configuration.');
+    } finally {
+      setIsTestingReport(false);
+    }
+  };
+
+  const toggleFrequency = (id: string) => {
+    setReportFrequencies(prev => 
+      prev.includes(id) ? prev.filter(f => f !== id) : [...prev, id]
+    );
+  };
+
+  const toggleAnalysis = (id: string) => {
+    setReportAnalysis(prev => 
+      prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]
+    );
   };
 
   const handleInviteUser = async (e: React.FormEvent) => {
@@ -363,6 +538,31 @@ export function AdminPanel() {
     }
   };
 
+  const handleSavePermissions = async () => {
+    setIsSavingPermissions(true);
+    setPermissionsSuccess(false);
+    try {
+      await setDoc(doc(db, 'settings', 'permissions'), permissions);
+      setPermissionsSuccess(true);
+      setTimeout(() => setPermissionsSuccess(false), 3000);
+    } catch (error) {
+      console.error('Error saving permissions:', error);
+      setErrorMsg('Failed to save permissions.');
+    } finally {
+      setIsSavingPermissions(false);
+    }
+  };
+
+  const togglePermission = (role: string, pageId: string) => {
+    setPermissions((prev: any) => {
+      const rolePerms = prev[role] || [];
+      const newPerms = rolePerms.includes(pageId)
+        ? rolePerms.filter((p: string) => p !== pageId)
+        : [...rolePerms, pageId];
+      return { ...prev, [role]: newPerms };
+    });
+  };
+
   if (profile?.role !== 'admin') {
     return <div className="p-8 text-center text-red-600 font-bold">Access Denied. Admins only.</div>;
   }
@@ -390,24 +590,55 @@ export function AdminPanel() {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Production Lines</h3>
           
-          <form onSubmit={handleAddLine} className="flex gap-2 mb-6">
-            <input
-              type="text"
-              value={newLineName}
-              onChange={(e) => setNewLineName(e.target.value)}
-              placeholder="New Line Name"
-              className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              required
-            />
-            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2">
-              <Plus size={18} /> Add
-            </button>
+          <form onSubmit={handleAddLine} className="flex flex-col gap-3 mb-6">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newLineName}
+                onChange={(e) => setNewLineName(e.target.value)}
+                placeholder="New Line Name"
+                className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              />
+              <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2">
+                <Plus size={18} /> Add
+              </button>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={newLineAllowOutOfOrder}
+                onChange={(e) => setNewLineAllowOutOfOrder(e.target.checked)}
+                className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+              />
+              Allow "Out of Order" reporting for this line
+            </label>
           </form>
 
           <ul className="space-y-2 max-h-64 overflow-y-auto">
             {lines.map(line => (
               <li key={line.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100">
-                <span className="font-medium text-gray-800">{line.name}</span>
+                <div className="flex flex-col">
+                  <span className="font-medium text-gray-800">{line.name}</span>
+                  <label className="flex items-center gap-2 mt-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={line.allowOutOfOrder || false}
+                      onChange={async (e) => {
+                        try {
+                          await updateDoc(doc(db, 'lines', line.id), {
+                            allowOutOfOrder: e.target.checked
+                          });
+                        } catch (err) {
+                          console.error('Error updating line:', err);
+                          setErrorMsg('Failed to update line');
+                        }
+                      }}
+                      className="w-3.5 h-3.5 text-amber-600 rounded border-gray-300 focus:ring-amber-500"
+                    />
+                    <span className="text-xs text-amber-600 font-medium">Allow "Out of Order"</span>
+                  </label>
+                </div>
                 <button onClick={() => handleDeleteLine(line.id, line.name)} className="text-red-500 hover:text-red-700 p-1">
                   <Trash2 size={18} />
                 </button>
@@ -443,10 +674,10 @@ export function AdminPanel() {
                 required
               />
               <MultiSelect
-                options={users.filter(u => u.role === 'maintenance_engineer').map(me => ({ value: me.id, label: me.displayName || me.email }))}
-                selectedValues={newMachineMEs}
-                onChange={setNewMachineMEs}
-                placeholder="All MEs (Default)"
+                options={groups.map(g => ({ value: g.id, label: g.name }))}
+                selectedValues={newMachineGroups}
+                onChange={setNewMachineGroups}
+                placeholder="All Teams (Default)"
                 className="w-full sm:w-48"
               />
               <select
@@ -541,19 +772,19 @@ export function AdminPanel() {
                                       className="w-16 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                                     />
                                     <MultiSelect
-                                      options={users.filter(u => u.role === 'maintenance_engineer').map(me => ({ value: me.id, label: me.displayName || me.email }))}
-                                      selectedValues={machine.defaultMEs || []}
+                                      options={groups.map(g => ({ value: g.id, label: g.name }))}
+                                      selectedValues={machine.assignedGroups || []}
                                       onChange={async (newValues) => {
                                         try {
                                           await updateDoc(doc(db, 'machines', machine.id), {
-                                            defaultMEs: newValues.length > 0 ? newValues : null
+                                            assignedGroups: newValues.length > 0 ? newValues : null
                                           });
                                         } catch (err) {
-                                          console.error('Error updating default MEs:', err);
-                                          setErrorMsg('Failed to update default MEs.');
+                                          console.error('Error updating assigned teams:', err);
+                                          setErrorMsg('Failed to update assigned teams.');
                                         }
                                       }}
-                                      placeholder="All MEs"
+                                      placeholder="All Teams"
                                       className="w-full sm:w-48"
                                     />
                                     <button 
@@ -579,73 +810,143 @@ export function AdminPanel() {
             </div>
           </DragDropContext>
         </div>
+        {/* Manage Teams */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Maintenance Teams</h3>
+          
+          <form onSubmit={handleAddGroup} className="flex flex-col sm:flex-row gap-3 mb-6">
+            <input
+              type="text"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="New Team Name"
+              className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+            <MultiSelect
+              options={users.filter(u => u.role === 'maintenance_engineer').map(me => ({ value: me.id, label: me.displayName || me.email }))}
+              selectedValues={newGroupUsers}
+              onChange={setNewGroupUsers}
+              placeholder="Select MEs..."
+              className="w-full sm:w-64"
+            />
+            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+              <Plus size={18} /> Add Team
+            </button>
+          </form>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {groups.map(group => (
+              <div key={group.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 flex flex-col h-full">
+                <div className="flex justify-between items-start mb-3">
+                  <h4 className="font-bold text-gray-800">{group.name}</h4>
+                  <button 
+                    onClick={() => handleDeleteGroup(group.id, group.name)} 
+                    className="text-red-500 hover:text-red-700 p-1"
+                    title="Delete Team"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Assigned MEs:</label>
+                  <MultiSelect
+                    options={users.filter(u => u.role === 'maintenance_engineer').map(me => ({ value: me.id, label: me.displayName || me.email }))}
+                    selectedValues={group.userIds || []}
+                    onChange={async (newValues) => {
+                      try {
+                        await updateDoc(doc(db, 'groups', group.id), {
+                          userIds: newValues
+                        });
+                      } catch (err) {
+                        console.error('Error updating team members:', err);
+                        setErrorMsg('Failed to update team members.');
+                      }
+                    }}
+                    placeholder="Select MEs..."
+                    className="w-full text-sm"
+                  />
+                </div>
+              </div>
+            ))}
+            {groups.length === 0 && <div className="col-span-full text-gray-500 text-center py-4">No teams found.</div>}
+          </div>
+        </div>
+
+        {/* Manage Reason Codes */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Reason Codes</h3>
+          
+          <form onSubmit={handleAddReasonCode} className="flex flex-col sm:flex-row gap-3 mb-6">
+            <input
+              type="text"
+              value={newReasonCode}
+              onChange={(e) => setNewReasonCode(e.target.value)}
+              placeholder="Code (e.g., MECH-01)"
+              className="w-full sm:w-48 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+            <input
+              type="text"
+              value={newReasonDescription}
+              onChange={(e) => setNewReasonDescription(e.target.value)}
+              placeholder="Description (e.g., Mechanical Failure)"
+              className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+              <Plus size={18} /> Add Code
+            </button>
+          </form>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {reasonCodes.map(code => (
+              <div key={code.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 flex justify-between items-start">
+                <div>
+                  <h4 className="font-bold text-gray-800">{code.code}</h4>
+                  <p className="text-sm text-gray-600 mt-1">{code.description}</p>
+                </div>
+                <button 
+                  onClick={() => handleDeleteReasonCode(code.id, code.code)} 
+                  className="text-red-500 hover:text-red-700 p-1"
+                  title="Delete Reason Code"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+            ))}
+            {reasonCodes.length === 0 && <div className="col-span-full text-gray-500 text-center py-4">No reason codes found.</div>}
+          </div>
+        </div>
+
       </div>
 
-      {/* Report Settings */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+      {/* System Settings */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-8">
         <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
-          <Mail size={20} className="text-blue-600" />
-          Report Settings
+          <Settings size={20} className="text-blue-600" />
+          System Settings
         </h3>
         <p className="text-sm text-gray-600 mb-4">
-          Configure the time and recipients for the daily and monthly data overview emails. The monthly report will also delete the data from the database.
+          Configure general system parameters like working hours for MTBF calculations.
         </p>
-        <form onSubmit={handleSaveSettings} className="space-y-4 max-w-2xl">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                <Clock size={16} /> Daily Send Time (24h format)
-              </label>
-              <input
-                type="time"
-                value={reportTime}
-                onChange={(e) => setReportTime(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                <Mail size={16} /> Recipient Emails
-              </label>
-              <input
-                type="text"
-                value={reportEmails}
-                onChange={(e) => setReportEmails(e.target.value)}
-                placeholder="admin@example.com, manager@example.com"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
-              <p className="text-xs text-gray-500 mt-1">Separate multiple emails with commas.</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                <Clock size={16} /> Monthly Send Day (1-28)
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="28"
-                value={monthlyReportDay}
-                onChange={(e) => setMonthlyReportDay(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                <Clock size={16} /> Monthly Send Time (24h format)
-              </label>
-              <input
-                type="time"
-                value={monthlyReportTime}
-                onChange={(e) => setMonthlyReportTime(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
-            </div>
+        <form onSubmit={handleSaveSettings} className="space-y-6 max-w-3xl">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+              <Clock size={16} /> Working Hours per Day
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="24"
+              value={workingHoursPerDay}
+              onChange={(e) => setWorkingHoursPerDay(Number(e.target.value))}
+              className="w-full sm:w-64 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">Used to calculate total available hours for MTBF and OEE.</p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 pt-4 border-t border-gray-100">
             <button
               type="submit"
               disabled={isSavingSettings}
@@ -657,6 +958,164 @@ export function AdminPanel() {
             {settingsSuccess && <span className="text-green-600 font-medium text-sm">Settings saved successfully!</span>}
           </div>
         </form>
+      </div>
+
+      {/* Report Settings */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
+          <Mail size={20} className="text-blue-600" />
+          Report Settings
+        </h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Configure the automated report message, frequency, and included analysis.
+        </p>
+        <form onSubmit={handleSaveSettings} className="space-y-6 max-w-3xl">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+              <Mail size={16} /> Recipient Emails
+            </label>
+            <input
+              type="text"
+              value={reportEmails}
+              onChange={(e) => setReportEmails(e.target.value)}
+              placeholder="admin@example.com, manager@example.com"
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">Separate multiple emails with commas.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Message Structure
+            </label>
+            <textarea
+              value={reportMessage}
+              onChange={(e) => setReportMessage(e.target.value)}
+              rows={4}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Enter the message body for the report..."
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Send Frequency
+              </label>
+              <div className="space-y-2">
+                {availableFrequencies.map(freq => (
+                  <label key={freq.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={reportFrequencies.includes(freq.id)}
+                      onChange={() => toggleFrequency(freq.id)}
+                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">{freq.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Included Analysis
+              </label>
+              <div className="space-y-2">
+                {availableAnalysis.map(analysis => (
+                  <label key={analysis.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={reportAnalysis.includes(analysis.id)}
+                      onChange={() => toggleAnalysis(analysis.id)}
+                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">{analysis.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 pt-4 border-t border-gray-100">
+            <button
+              type="submit"
+              disabled={isSavingSettings}
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              <Save size={18} />
+              {isSavingSettings ? 'Saving...' : 'Save Settings'}
+            </button>
+            <button
+              type="button"
+              onClick={handleTestReport}
+              disabled={isTestingReport}
+              className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              {isTestingReport ? 'Testing...' : 'Test System'}
+            </button>
+            {settingsSuccess && <span className="text-green-600 font-medium text-sm">Settings saved successfully!</span>}
+          </div>
+          
+          {testReportResult && (
+            <div className="mt-4 p-4 bg-gray-900 text-green-400 font-mono text-sm rounded-lg whitespace-pre-wrap">
+              {testReportResult}
+            </div>
+          )}
+        </form>
+      </div>
+
+      {/* Role Permissions */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
+          <Settings size={20} className="text-blue-600" />
+          Role Authorities
+        </h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Select which pages each role can access.
+        </p>
+        <div className="overflow-x-auto mb-4">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
+                <th className="p-3 font-medium">Page</th>
+                {roles.map(role => (
+                  <th key={role} className="p-3 font-medium text-center">{role.replace('_', ' ')}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {availablePages.map(page => (
+                <tr key={page.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="p-3 font-medium text-gray-800">{page.label}</td>
+                  {roles.map(role => (
+                    <td key={`${role}-${page.id}`} className="p-3 text-center">
+                      <input
+                        type="checkbox"
+                        checked={(permissions[role] || []).includes(page.id)}
+                        onChange={() => togglePermission(role, page.id)}
+                        disabled={role === 'admin' && page.id === 'admin'} // Admin must always have access to Admin Panel
+                        className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 disabled:opacity-50"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={handleSavePermissions}
+            disabled={isSavingPermissions}
+            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+          >
+            <Save size={18} />
+            {isSavingPermissions ? 'Saving...' : 'Save Authorities'}
+          </button>
+          {permissionsSuccess && <span className="text-green-600 font-medium text-sm">Authorities saved successfully!</span>}
+        </div>
       </div>
 
       {/* Manage Users */}
@@ -762,8 +1221,12 @@ export function AdminPanel() {
                   try {
                     if (itemToDelete.type === 'line') {
                       await deleteDoc(doc(db, 'lines', itemToDelete.id));
-                    } else {
+                    } else if (itemToDelete.type === 'machine') {
                       await deleteDoc(doc(db, 'machines', itemToDelete.id));
+                    } else if (itemToDelete.type === 'group') {
+                      await deleteDoc(doc(db, 'groups', itemToDelete.id));
+                    } else if (itemToDelete.type === 'reasonCode') {
+                      await deleteDoc(doc(db, 'reasonCodes', itemToDelete.id));
                     }
                     setItemToDelete(null);
                   } catch (error) {

@@ -4,9 +4,18 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 
 export function useAlarmNotification() {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const notifiedIntervals = useRef<Record<string, number>>({});
   const [activeAlarm, setActiveAlarm] = useState<{ message: string; id: string } | null>(null);
+  const [groups, setGroups] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const unsubGroups = onSnapshot(collection(db, 'groups'), snapshot => {
+      setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsubGroups();
+  }, [user]);
 
   useEffect(() => {
     if (profile?.role !== 'maintenance_engineer' && profile?.role !== 'admin') return;
@@ -76,9 +85,21 @@ export function useAlarmNotification() {
     const checkAlarms = () => {
       const now = new Date();
       currentIncidents.forEach(incident => {
-        // If assigned to someone else, don't notify (unless admin)
-        if (profile?.role !== 'admin' && incident.assignedTo && incident.assignedTo.length > 0 && !incident.assignedTo.includes(profile?.uid)) {
-          return;
+        if (incident.type === 'out_of_order') return; // Don't notify MEs for out of order
+
+        if (profile?.role === 'maintenance_engineer' && user) {
+          const hasGroups = incident.assignedGroups && incident.assignedGroups.length > 0;
+          const hasIndividuals = incident.assignedTo && incident.assignedTo.length > 0;
+          
+          if (hasGroups || hasIndividuals) {
+            const userGroups = groups.filter(g => g.userIds?.includes(user.uid));
+            const inGroup = hasGroups && userGroups.some(g => incident.assignedGroups.includes(g.id));
+            const isIndividual = hasIndividuals && incident.assignedTo.includes(user.uid);
+            
+            if (!inGroup && !isIndividual) {
+              return; // Not assigned to this user or their groups
+            }
+          }
         }
 
         const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
@@ -105,7 +126,7 @@ export function useAlarmNotification() {
       unsub();
       clearInterval(timer);
     };
-  }, [profile]);
+  }, [profile, user, groups]);
 
   return { activeAlarm, setActiveAlarm };
 }

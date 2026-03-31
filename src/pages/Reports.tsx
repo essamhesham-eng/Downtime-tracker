@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, orderBy, getDocs, where, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import { FileSpreadsheet, Download, Calendar, Edit2 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -24,6 +24,14 @@ export function Reports() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const formatName = (name: string) => {
+    if (!name) return 'Unknown';
+    if (name.includes('@')) {
+      return name.split('@')[0];
+    }
+    return name;
+  };
+
   useEffect(() => {
     if (!['admin', 'manager', 'pd_engineer'].includes(profile?.role || '')) return;
 
@@ -35,7 +43,7 @@ export function Reports() {
         const uMap: Record<string, string> = {};
         usersSnapshot.docs.forEach(doc => {
           const data = doc.data();
-          uMap[doc.id] = data.displayName || data.email || doc.id;
+          uMap[doc.id] = data.displayName || (data.email ? data.email.split('@')[0] : doc.id);
         });
         setUsersMap(uMap);
 
@@ -77,15 +85,48 @@ export function Reports() {
         'Start Time': format(start, 'yyyy-MM-dd HH:mm:ss'),
         'End Time': end ? format(end, 'yyyy-MM-dd HH:mm:ss') : 'Ongoing',
         'Duration (Minutes)': incident.durationMinutes || (end ? Math.ceil((end.getTime() - start.getTime()) / 60000) : 'Ongoing'),
+        'Stopped Jigs': incident.totalJigs ? (incident.breakdownJigs || 0) : 1,
+        'Breakdown (%)': incident.durationMinutes != null
+          ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (Number(incident.durationMinutes) / 60) * 100).toFixed(2) + '%'
+          : 'N/A',
+        'Reason Code': incident.reasonCode || 'N/A',
         'Cause': incident.cause || 'N/A',
         'Action Taken': incident.action || 'N/A',
-        'Reported By': usersMap[incident.reportedBy] || incident.reportedBy,
-        'Acknowledged By': usersMap[incident.acknowledgedBy] || incident.acknowledgedBy || 'N/A',
-        'Resolved By': usersMap[incident.resolvedBy] || incident.resolvedBy || 'N/A',
+        'Reported By': formatName(incident.reportedByName || usersMap[incident.reportedBy] || incident.reportedBy),
+        'Acknowledged By': formatName(usersMap[incident.acknowledgedBy] || incident.acknowledgedBy || 'N/A'),
+        'Resolved By': formatName(incident.resolvedByName || usersMap[incident.resolvedBy] || incident.resolvedBy || 'N/A'),
       };
     });
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
+    
+    // Apply styling for out_of_order incidents
+    if (worksheet['!ref']) {
+      const range = XLSX.utils.decode_range(worksheet['!ref']);
+      for (let R = 1; R <= range.e.r; ++R) {
+        const incident = incidents[R - 1];
+        if (incident && incident.type === 'out_of_order') {
+          for (let C = 0; C <= range.e.c; ++C) {
+            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+            if (!worksheet[cellAddress]) {
+              worksheet[cellAddress] = { t: 's', v: '' };
+            }
+            worksheet[cellAddress].s = {
+              fill: {
+                fgColor: { rgb: "FFF9C4" } // Light yellow
+              },
+              border: {
+                top: { style: "thick", color: { rgb: "FFB300" } }, // Golden/Amber
+                bottom: { style: "thick", color: { rgb: "FFB300" } },
+                left: C === 0 ? { style: "thick", color: { rgb: "FFB300" } } : undefined,
+                right: C === range.e.c ? { style: "thick", color: { rgb: "FFB300" } } : undefined
+              }
+            };
+          }
+        }
+      }
+    }
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Downtime Data');
     
@@ -114,31 +155,42 @@ export function Reports() {
     
     setIsSaving(true);
     try {
-      const updateData: any = {
-        status: editStatus,
-        machineName: editMachineName,
-        lineName: editLineName,
-        reportedBy: editReportedBy,
-        startTime: new Date(editStartTime),
-        cause: editCause,
-        action: editAction,
-      };
+      const updateData: any = {};
       
-      if (editDuration !== '') {
-        updateData.durationMinutes = Number(editDuration);
+      if (editStatus !== editingIncident.status) updateData.status = editStatus;
+      if (editMachineName !== editingIncident.machineName) updateData.machineName = editMachineName;
+      if (editLineName !== editingIncident.lineName) updateData.lineName = editLineName;
+      if (editReportedBy !== editingIncident.reportedBy) updateData.reportedBy = editReportedBy;
+      if (editCause !== (editingIncident.cause || '')) updateData.cause = editCause;
+      if (editAction !== (editingIncident.action || '')) updateData.action = editAction;
+      
+      const start = editingIncident.startTime?.toDate ? editingIncident.startTime.toDate() : new Date(editingIncident.startTime);
+      if (editStartTime !== format(start, "yyyy-MM-dd'T'HH:mm")) {
+        updateData.startTime = new Date(editStartTime);
       }
       
-      await updateDoc(doc(db, 'incidents', editingIncident.id), updateData);
+      if (editDuration !== '') {
+        if (Number(editDuration) !== editingIncident.durationMinutes) {
+          updateData.durationMinutes = Number(editDuration);
+        }
+      } else if (editingIncident.durationMinutes != null) {
+        updateData.durationMinutes = null;
+      }
       
-      // Update local state
-      setIncidents(prev => prev.map(inc => 
-        inc.id === editingIncident.id ? { ...inc, ...updateData } : inc
-      ));
+      if (Object.keys(updateData).length > 0) {
+        await updateDoc(doc(db, 'incidents', editingIncident.id), updateData);
+        
+        // Update local state
+        setIncidents(prev => prev.map(inc => 
+          inc.id === editingIncident.id ? { ...inc, ...updateData } : inc
+        ));
+      }
       
       setEditingIncident(null);
-    } catch (error) {
+      setError(null);
+    } catch (error: any) {
       console.error('Error updating incident:', error);
-      setError('Failed to update incident. Make sure you have the right permissions.');
+      setError(error.message || 'Failed to update incident. Make sure you have the right permissions.');
     } finally {
       setIsSaving(false);
     }
@@ -198,16 +250,26 @@ export function Reports() {
                   <th className="p-4 font-medium">Status</th>
                   <th className="p-4 font-medium">Start Time</th>
                   <th className="p-4 font-medium">Duration</th>
+                  <th className="p-4 font-medium">Stopped Jigs</th>
+                  <th className="p-4 font-medium">Breakdown (%)</th>
                   <th className="p-4 font-medium">Reported By</th>
                   <th className="p-4 font-medium">Fixed By</th>
                   {profile?.role === 'admin' && <th className="p-4 font-medium text-right">Actions</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="">
                 {incidents.slice(0, 50).map(incident => {
                   const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
+                  const isOutOfOrder = incident.type === 'out_of_order';
                   return (
-                    <tr key={incident.id} className="hover:bg-gray-50 transition-colors">
+                    <tr 
+                      key={incident.id} 
+                      className={`transition-colors ${
+                        isOutOfOrder 
+                          ? 'bg-yellow-50 outline outline-[3px] outline-amber-500 hover:bg-yellow-100 relative z-10' 
+                          : 'hover:bg-gray-50 border-b border-gray-100'
+                      }`}
+                    >
                       <td className="p-4 font-medium text-gray-800">{incident.machineName}</td>
                       <td className="p-4 text-gray-600">{incident.lineName}</td>
                       <td className="p-4">
@@ -225,10 +287,18 @@ export function Reports() {
                         {incident.durationMinutes ? `${incident.durationMinutes} mins` : 'Ongoing'}
                       </td>
                       <td className="p-4 text-gray-600">
-                        {incident.reportedByName || usersMap[incident.reportedBy] || incident.reportedBy}
+                        {incident.totalJigs ? (incident.breakdownJigs || 0) : 1}
                       </td>
                       <td className="p-4 text-gray-600">
-                        {incident.resolvedByName || (incident.resolvedBy ? usersMap[incident.resolvedBy] || incident.resolvedBy : 'N/A')}
+                        {incident.durationMinutes != null
+                          ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (Number(incident.durationMinutes) / 60) * 100).toFixed(2) + '%'
+                          : '-'}
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        {formatName(incident.reportedByName || usersMap[incident.reportedBy] || incident.reportedBy)}
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        {formatName(incident.resolvedByName || (incident.resolvedBy ? usersMap[incident.resolvedBy] || incident.resolvedBy : 'N/A'))}
                       </td>
                       {profile?.role === 'admin' && (
                         <td className="p-4 text-right">
