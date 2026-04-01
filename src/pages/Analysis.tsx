@@ -128,11 +128,19 @@ export function Analysis() {
     });
   }, [incidents, startDate, endDate, selectedLine, selectedMachine, lines, profile, userGroups, user]);
 
+  // Helper to calculate duration including active incidents
+  const getIncidentDuration = (inc: any) => {
+    if (inc.durationMinutes != null) return inc.durationMinutes;
+    if (!inc.startTime) return 0;
+    const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
+    return Math.ceil((new Date().getTime() - start.getTime()) / 60000);
+  };
+
   // KPIs
-  const totalDowntimeMinutes = filteredIncidents.reduce((acc, inc) => acc + (inc.durationMinutes || 0), 0);
+  const totalDowntimeMinutes = filteredIncidents.reduce((acc, inc) => acc + getIncidentDuration(inc), 0);
   const totalDowntimeHours = (totalDowntimeMinutes / 60).toFixed(1);
   
-  const prevDowntimeMinutes = previousPeriodIncidents.reduce((acc, inc) => acc + (inc.durationMinutes || 0), 0);
+  const prevDowntimeMinutes = previousPeriodIncidents.reduce((acc, inc) => acc + getIncidentDuration(inc), 0);
   const downtimeChange = prevDowntimeMinutes === 0 ? 0 : ((totalDowntimeMinutes - prevDowntimeMinutes) / prevDowntimeMinutes) * 100;
 
   const totalEvents = filteredIncidents.length;
@@ -148,8 +156,8 @@ export function Analysis() {
 
   // All Issues (Sorted by duration)
   const allIssues = [...filteredIncidents]
-    .filter(i => i.durationMinutes)
-    .sort((a, b) => b.durationMinutes - a.durationMinutes);
+    .filter(i => getIncidentDuration(i) > 0)
+    .sort((a, b) => getIncidentDuration(b) - getIncidentDuration(a));
 
   // Trend Data
   const trendData = useMemo(() => {
@@ -162,15 +170,15 @@ export function Analysis() {
       const sortKey = format(dateObj, 'yyyy-MM-dd');
       
       if (!data[date]) data[date] = { date, fullDate, sortKey, totalHours: 0, totalEvents: 0 };
-      data[date].totalHours += (inc.durationMinutes || 0) / 60;
+      data[date].totalHours += getIncidentDuration(inc) / 60;
       data[date].totalEvents += 1;
       
       // Group by machine category/name
       const cat = inc.machineName || 'Unknown';
       if (!data[date][cat + '_hours']) data[date][cat + '_hours'] = 0;
       if (!data[date][cat + '_events']) data[date][cat + '_events'] = 0;
-      data[date][cat + '_hours'] += (inc.durationMinutes || 0) / 60;
-      data[date][cat + '_events'] += 1;
+      data[date][cat + '_hours'] += getIncidentDuration(inc) / 60;
+      data[date].totalEvents += 1;
     });
     return Object.values(data).sort((a: any, b: any) => a.sortKey.localeCompare(b.sortKey));
   }, [filteredIncidents]);
@@ -182,7 +190,7 @@ export function Analysis() {
       if (!inc.startTime) return;
       const date = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
       const hour = date.getHours();
-      data[hour].duration += (inc.durationMinutes || 0);
+      data[hour].duration += getIncidentDuration(inc);
     });
     return data;
   }, [filteredIncidents]);
@@ -194,7 +202,7 @@ export function Analysis() {
 
     filteredIncidents.forEach(inc => {
       const category = inc.reasonCode || 'Uncategorized';
-      const duration = inc.durationMinutes || 0;
+      const duration = getIncidentDuration(inc);
       if (!groups[category]) groups[category] = 0;
       groups[category] += duration;
       totalDuration += duration;
@@ -225,7 +233,7 @@ export function Analysis() {
         const causes = filteredIncidents.map(i => ({
           reasonCode: i.reasonCode || 'Uncategorized',
           cause: i.cause || 'Unknown',
-          duration: i.durationMinutes || 0
+          duration: getIncidentDuration(i)
         }));
 
         const prompt = `
@@ -349,6 +357,96 @@ export function Analysis() {
           tooltip="Mean Time To Repair: Average time taken to resolve an incident."
         />
       </div>
+
+      {/* Filtered Dashboard Visual */}
+      {selectedLine !== 'all' && (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+          <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+            Line Overview
+            <div className="group relative">
+              <Info size={16} className="text-gray-400 cursor-help" />
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg z-10 font-normal">
+                Visual representation of the line for the selected period. Red indicates breakdowns occurred.
+              </div>
+            </div>
+          </h3>
+          
+          <div className="flex flex-wrap gap-4 items-start min-w-max pb-4">
+            {machines
+              .filter(m => m.lineId === selectedLine)
+              .filter(m => selectedMachine === 'all' || m.id === selectedMachine)
+              .sort((a: any, b: any) => {
+                const orderA = a.order !== undefined ? a.order : 0;
+                const orderB = b.order !== undefined ? b.order : 0;
+                if (orderA !== orderB) return orderA - orderB;
+                return (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0);
+              })
+              .map((machine, index) => {
+                // Calculate metrics for this machine in the filtered period
+                const machineIncidents = filteredIncidents.filter(inc => inc.machineId === machine.id);
+                const totalStoppageEvents = machineIncidents.length;
+                const totalStoppageMinutes = machineIncidents.reduce((sum, inc) => sum + getIncidentDuration(inc), 0);
+                
+                // Calculate breakdown percentage
+                // Total available minutes = totalHours * 60
+                const availableMinutes = totalHours * 60;
+                const breakdownPercentage = availableMinutes > 0 
+                  ? ((totalStoppageMinutes / availableMinutes) * 100).toFixed(1) 
+                  : '0.0';
+                  
+                const hasBreakdown = totalStoppageEvents > 0;
+
+                return (
+                  <div key={machine.id} className="flex items-center">
+                    {/* Connector line */}
+                    {index > 0 && selectedMachine === 'all' && (
+                      <div className="flex flex-col items-center justify-center relative mx-1 w-8 h-12 mt-[-40px]">
+                        <div className="w-full h-1 bg-gray-200 rounded-full"></div>
+                      </div>
+                    )}
+                    
+                    <div className="flex flex-col items-center group relative">
+                      <div 
+                        className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-md transition-transform transform hover:scale-105 relative ${
+                          hasBreakdown ? 'bg-red-500' : 'bg-green-500'
+                        }`}
+                      >
+                        <span className="text-xs font-bold truncate px-1">{machine.name.substring(0, 4)}</span>
+                      </div>
+                      
+                      {/* Tooltip for full name */}
+                      <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 text-white text-xs rounded py-1 px-2 whitespace-nowrap z-10 pointer-events-none">
+                        {machine.name}
+                      </div>
+                      
+                      {/* Metrics below the circle */}
+                      <div className="flex flex-col items-center mt-3 bg-gray-50 rounded-lg p-2 border border-gray-200 min-w-[90px] shadow-sm">
+                        <div className="flex flex-col w-full gap-1.5">
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span className="text-gray-500">Events:</span>
+                            <span className="font-bold text-gray-800">{totalStoppageEvents}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span className="text-gray-500">Mins:</span>
+                            <span className={`font-bold ${totalStoppageMinutes > 0 ? 'text-red-600' : 'text-gray-800'}`}>{totalStoppageMinutes}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-gray-200">
+                            <span className="text-gray-500">Down:</span>
+                            <span className={`font-bold ${parseFloat(breakdownPercentage) > 0 ? 'text-orange-600' : 'text-green-600'}`}>{breakdownPercentage}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              
+            {machines.filter(m => m.lineId === selectedLine).length === 0 && (
+              <div className="text-gray-500 italic text-sm py-4">No machines found for this line.</div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Pareto Chart */}
@@ -550,13 +648,13 @@ export function Analysis() {
                     <td className="p-4 text-gray-600">
                       {inc.startTime ? format(inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime), 'MMM d, HH:mm') : 'N/A'}
                     </td>
-                    <td className="p-4 font-medium text-red-600">{inc.durationMinutes} mins</td>
+                    <td className="p-4 font-medium text-red-600">{getIncidentDuration(inc)} mins</td>
                     <td className="p-4 text-gray-600">
                       {inc.totalJigs ? (inc.breakdownJigs || 0) : 1}
                     </td>
                     <td className="p-4 text-gray-600">
-                      {inc.durationMinutes != null
-                        ? ((Number(inc.totalJigs ? (inc.breakdownJigs || 0) : 1) / Number(inc.totalJigs || 1)) * (Number(inc.durationMinutes) / 60) * 100).toFixed(2) + '%'
+                      {getIncidentDuration(inc) > 0
+                        ? ((Number(inc.totalJigs ? (inc.breakdownJigs || 0) : 1) / Number(inc.totalJigs || 1)) * (getIncidentDuration(inc) / 60) * 100).toFixed(2) + '%'
                         : '-'}
                     </td>
                     <td className="p-4 text-gray-600">

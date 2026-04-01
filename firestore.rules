@@ -39,9 +39,9 @@ service cloud.firestore {
     //   - reportedBy: string (required)
     //   - startTime: timestamp (required)
     //   - endTime: timestamp | null (optional)
-    //   - status: string (required, enum: 'open', 'acknowledged', 'resolved')
-    //   - acknowledgedBy: string | null (optional)
-    //   - acknowledgedAt: timestamp | null (optional)
+    //   - status: string (required, enum: 'open', 'working_on', 'resolved')
+    //   - workingOnBy: string | null (optional)
+    //   - workingOnAt: timestamp | null (optional)
     //   - resolvedBy: string | null (optional)
     //   - durationMinutes: number | null (optional)
     //
@@ -128,14 +128,24 @@ service cloud.firestore {
     }
 
     function isValidLine(data) {
-      return hasOnlyAllowedFields(['name', 'createdAt', 'id', 'updatedAt', 'allowOutOfOrder']) &&
+      return hasOnlyAllowedFields(['name', 'createdAt', 'id', 'updatedAt', 'allowOutOfOrder', 'wipUpdatedAt']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              (!('allowOutOfOrder' in data) || data.allowOutOfOrder is bool) &&
-             (!('createdAt' in data) || data.createdAt is timestamp);
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('wipUpdatedAt' in data) || data.wipUpdatedAt is timestamp);
+    }
+
+    function isValidWipEntry(data) {
+      return hasOnlyAllowedFields(['lineId', 'machineId', 'wip', 'createdAt', 'createdBy']) &&
+             data.lineId is string && data.lineId.size() > 0 &&
+             data.machineId is string && data.machineId.size() > 0 &&
+             data.wip is number &&
+             data.createdAt is timestamp &&
+             data.createdBy is string;
     }
 
     function isValidMachine(data) {
-      return hasOnlyAllowedFields(['lineId', 'name', 'status', 'currentIncidentId', 'createdAt', 'order', 'id', 'updatedAt', 'defaultMEs', 'assignedGroups', 'isCritical', 'jigs', 'category', 'wip']) &&
+      return hasOnlyAllowedFields(['lineId', 'name', 'status', 'currentIncidentId', 'order', 'defaultMEs', 'assignedGroups', 'isCritical', 'jigs', 'category', 'wip', 'createdAt', 'id', 'updatedAt']) &&
              data.lineId is string && data.lineId.size() > 0 && data.lineId.size() < 100 &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.status in ['running', 'down'] &&
@@ -151,7 +161,7 @@ service cloud.firestore {
     }
 
     function isValidIncident(data) {
-      return hasOnlyAllowedFields(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'reportedByName', 'startTime', 'endTime', 'status', 'acknowledgedBy', 'acknowledgedAt', 'resolvedBy', 'resolvedByName', 'durationMinutes', 'id', 'updatedAt', 'cause', 'action', 'reviewedBy', 'reviewedAt', 'assignedTo', 'assignedGroups', 'breakdownJigs', 'totalJigs', 'type', 'causeImageUrl', 'actionImageUrl', 'reasonCode']) &&
+      return hasOnlyAllowedFields(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'reportedByName', 'startTime', 'endTime', 'status', 'workingOnBy', 'workingOnAt', 'resolvedBy', 'resolvedByName', 'durationMinutes', 'id', 'updatedAt', 'cause', 'action', 'reviewedBy', 'reviewedAt', 'assignedTo', 'assignedGroups', 'breakdownJigs', 'totalJigs', 'type', 'causeImageUrl', 'actionImageUrl', 'reasonCode']) &&
              data.lineId is string && data.lineId.size() > 0 && data.lineId.size() < 100 &&
              data.machineId is string && data.machineId.size() > 0 && data.machineId.size() < 100 &&
              data.machineName is string && data.machineName.size() > 0 && data.machineName.size() < 100 &&
@@ -160,9 +170,9 @@ service cloud.firestore {
              (!('reportedByName' in data) || data.reportedByName == null || (data.reportedByName is string && data.reportedByName.size() < 100)) &&
              (!('startTime' in data) || data.startTime is timestamp) &&
              (!('endTime' in data) || data.endTime == null || data.endTime is timestamp) &&
-             data.status in ['open', 'acknowledged', 'resolved', 'pending_me_review'] &&
-             (!('acknowledgedBy' in data) || data.acknowledgedBy == null || (data.acknowledgedBy is string && data.acknowledgedBy.size() < 100)) &&
-             (!('acknowledgedAt' in data) || data.acknowledgedAt == null || data.acknowledgedAt is timestamp) &&
+             data.status in ['open', 'working_on', 'resolved', 'pending_me_review'] &&
+             (!('workingOnBy' in data) || data.workingOnBy == null || (data.workingOnBy is string && data.workingOnBy.size() < 100)) &&
+             (!('workingOnAt' in data) || data.workingOnAt == null || data.workingOnAt is timestamp) &&
              (!('resolvedBy' in data) || data.resolvedBy == null || (data.resolvedBy is string && data.resolvedBy.size() < 100)) &&
              (!('resolvedByName' in data) || data.resolvedByName == null || (data.resolvedByName is string && data.resolvedByName.size() < 100)) &&
              (!('durationMinutes' in data) || data.durationMinutes == null || data.durationMinutes is number) &&
@@ -224,7 +234,17 @@ service cloud.firestore {
     match /lines/{lineId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidLine(request.resource.data);
-      allow update: if isAdmin() && isValidLine(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
+      allow update: if isAuthenticated() && isValidLine(request.resource.data) && (
+        (isAdmin() && areImmutableFieldsUnchanged(['createdAt'])) ||
+        (!isAdmin() && areImmutableFieldsUnchanged(['createdAt', 'name', 'allowOutOfOrder']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /wip_entries/{entryId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidWipEntry(request.resource.data);
+      allow update: if false; // append-only
       allow delete: if isAdmin();
     }
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { AlertTriangle, CheckCircle } from 'lucide-react';
@@ -58,8 +58,11 @@ export function ReportIncident() {
         return;
       }
 
-      // Create new incident
-      const incidentRef = await addDoc(collection(db, 'incidents'), {
+      const batch = writeBatch(db);
+      
+      const incidentRef = doc(collection(db, 'incidents'));
+      
+      batch.set(incidentRef, {
         lineId: selectedLine,
         machineId: selectedMachine,
         machineName: machine.name,
@@ -74,11 +77,13 @@ export function ReportIncident() {
         status: 'open',
       });
 
-      // Update machine status
-      await updateDoc(doc(db, 'machines', selectedMachine), {
+      const machineRef = doc(db, 'machines', selectedMachine);
+      batch.update(machineRef, {
         status: 'down',
         currentIncidentId: incidentRef.id,
       });
+
+      await batch.commit();
 
       setSuccess(true);
       setSelectedLine('');

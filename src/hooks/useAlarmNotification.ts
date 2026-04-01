@@ -26,7 +26,7 @@ export function useAlarmNotification() {
 
     const q = query(
       collection(db, 'incidents'),
-      where('status', 'in', ['open', 'acknowledged'])
+      where('status', 'in', ['open', 'working_on'])
     );
 
     let currentIncidents: any[] = [];

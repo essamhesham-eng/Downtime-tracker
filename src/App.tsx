@@ -3,19 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Layout } from './components/Layout';
-import { Dashboard } from './pages/Dashboard';
-import { ReportIncident } from './pages/ReportIncident';
-import { IncidentsList } from './pages/IncidentsList';
-import { AdminPanel } from './pages/AdminPanel';
-import { Reports } from './pages/Reports';
-import { Profile } from './pages/Profile';
-import { Analysis } from './pages/Analysis';
-import { WIP } from './pages/WIP';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Wrench } from 'lucide-react';
+
+// Lazy load pages for better performance
+const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const ReportIncident = lazy(() => import('./pages/ReportIncident').then(m => ({ default: m.ReportIncident })));
+const IncidentsList = lazy(() => import('./pages/IncidentsList').then(m => ({ default: m.IncidentsList })));
+const AdminPanel = lazy(() => import('./pages/AdminPanel').then(m => ({ default: m.AdminPanel })));
+const Reports = lazy(() => import('./pages/Reports').then(m => ({ default: m.Reports })));
+const Profile = lazy(() => import('./pages/Profile').then(m => ({ default: m.Profile })));
+const Analysis = lazy(() => import('./pages/Analysis').then(m => ({ default: m.Analysis })));
+const WIP = lazy(() => import('./pages/WIP').then(m => ({ default: m.WIP })));
 
 function ProtectedRoute({ children, requiredPermission }: { children: React.ReactNode, requiredPermission?: string }) {
   const { user, profile, loading, permissions, signOut } = useAuth();
@@ -146,48 +149,56 @@ function Login() {
 
 function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      
-      <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-        <Route index element={<ProtectedRoute requiredPermission="dashboard"><Dashboard /></ProtectedRoute>} />
-        <Route path="report" element={
-          <ProtectedRoute requiredPermission="report">
-            <ReportIncident />
-          </ProtectedRoute>
-        } />
-        <Route path="incidents" element={
-          <ProtectedRoute requiredPermission="incidents">
-            <IncidentsList />
-          </ProtectedRoute>
-        } />
-        <Route path="reports" element={
-          <ProtectedRoute requiredPermission="reports">
-            <Reports />
-          </ProtectedRoute>
-        } />
-        <Route path="analysis" element={
-          <ProtectedRoute requiredPermission="analysis">
-            <Analysis />
-          </ProtectedRoute>
-        } />
-        <Route path="wip" element={
-          <ProtectedRoute requiredPermission="wip">
-            <WIP />
-          </ProtectedRoute>
-        } />
-        <Route path="profile" element={
-          <ProtectedRoute requiredPermission="profile">
-            <Profile />
-          </ProtectedRoute>
-        } />
-        <Route path="admin" element={
-          <ProtectedRoute requiredPermission="admin">
-            <AdminPanel />
-          </ProtectedRoute>
-        } />
-      </Route>
-    </Routes>
+    <ErrorBoundary>
+      <Suspense fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        </div>
+      }>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          
+          <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+            <Route index element={<ProtectedRoute requiredPermission="dashboard"><Dashboard /></ProtectedRoute>} />
+            <Route path="report" element={
+              <ProtectedRoute requiredPermission="report">
+                <ReportIncident />
+              </ProtectedRoute>
+            } />
+            <Route path="incidents" element={
+              <ProtectedRoute requiredPermission="incidents">
+                <IncidentsList />
+              </ProtectedRoute>
+            } />
+            <Route path="reports" element={
+              <ProtectedRoute requiredPermission="reports">
+                <Reports />
+              </ProtectedRoute>
+            } />
+            <Route path="analysis" element={
+              <ProtectedRoute requiredPermission="analysis">
+                <Analysis />
+              </ProtectedRoute>
+            } />
+            <Route path="wip" element={
+              <ProtectedRoute requiredPermission="wip">
+                <WIP />
+              </ProtectedRoute>
+            } />
+            <Route path="profile" element={
+              <ProtectedRoute requiredPermission="profile">
+                <Profile />
+              </ProtectedRoute>
+            } />
+            <Route path="admin" element={
+              <ProtectedRoute requiredPermission="admin">
+                <AdminPanel />
+              </ProtectedRoute>
+            } />
+          </Route>
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 

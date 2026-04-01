@@ -30,7 +30,7 @@ export function Layout() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row">
       {/* Sidebar / Bottom Nav */}
-      <nav className="bg-white border-r border-gray-200 w-full md:w-64 flex-shrink-0 fixed bottom-0 md:relative z-10 md:h-screen flex md:flex-col shadow-[0_-2px_10px_rgba(0,0,0,0.05)] md:shadow-none">
+      <nav className="bg-white border-r border-gray-200 w-full md:w-64 flex-shrink-0 fixed bottom-0 md:relative z-40 md:h-screen flex md:flex-col shadow-[0_-2px_10px_rgba(0,0,0,0.05)] md:shadow-none">
         <div className="p-4 hidden md:block border-b border-gray-100">
           <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
             <Wrench className="text-blue-600" />

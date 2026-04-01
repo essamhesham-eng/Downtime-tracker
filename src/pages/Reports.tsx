@@ -10,7 +10,11 @@ export function Reports() {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [incidents, setIncidents] = useState<any[]>([]);
+  const [wipEntries, setWipEntries] = useState<any[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
+  const [machinesMap, setMachinesMap] = useState<Record<string, string>>({});
+  const [linesMap, setLinesMap] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState<'downtime' | 'wip'>('downtime');
 
   const [editingIncident, setEditingIncident] = useState<any | null>(null);
   const [editStatus, setEditStatus] = useState('');
@@ -21,6 +25,10 @@ export function Reports() {
   const [editStartTime, setEditStartTime] = useState('');
   const [editCause, setEditCause] = useState('');
   const [editAction, setEditAction] = useState('');
+  const [editTotalJigs, setEditTotalJigs] = useState<number | ''>('');
+  const [editBreakdownJigs, setEditBreakdownJigs] = useState<number | ''>('');
+  const [editType, setEditType] = useState('');
+  const [editResolvedBy, setEditResolvedBy] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,16 +55,35 @@ export function Reports() {
         });
         setUsersMap(uMap);
 
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        
-        const q = query(
+        // Fetch machines for mapping
+        const machinesSnapshot = await getDocs(collection(db, 'machines'));
+        const mMap: Record<string, string> = {};
+        machinesSnapshot.docs.forEach(doc => {
+          mMap[doc.id] = doc.data().name;
+        });
+        setMachinesMap(mMap);
+
+        // Fetch lines for mapping
+        const linesSnapshot = await getDocs(collection(db, 'lines'));
+        const lMap: Record<string, string> = {};
+        linesSnapshot.docs.forEach(doc => {
+          lMap[doc.id] = doc.data().name;
+        });
+        setLinesMap(lMap);
+
+        const qIncidents = query(
           collection(db, 'incidents'), 
-          where('startTime', '>=', startOfMonth),
           orderBy('startTime', 'desc')
         );
-        const snapshot = await getDocs(q);
-        setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const snapshotIncidents = await getDocs(qIncidents);
+        setIncidents(snapshotIncidents.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        const qWip = query(
+          collection(db, 'wip_entries'),
+          orderBy('createdAt', 'desc')
+        );
+        const snapshotWip = await getDocs(qWip);
+        setWipEntries(snapshotWip.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       } catch (error) {
         console.error('Error fetching data:', error);
       } finally {
@@ -68,70 +95,107 @@ export function Reports() {
   }, [profile]);
 
   const handleExport = () => {
-    if (incidents.length === 0) {
-      setError('No data to export.');
-      return;
-    }
+    if (activeTab === 'downtime') {
+      if (incidents.length === 0) {
+        setError('No data to export.');
+        return;
+      }
 
-    const exportData = incidents.map(incident => {
-      const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-      const end = incident.endTime?.toDate ? incident.endTime.toDate() : (incident.endTime ? new Date(incident.endTime) : null);
+      const exportData = incidents.map(incident => {
+        let start: Date | null = null;
+        if (incident.startTime) {
+          start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
+        }
+        
+        let end: Date | null = null;
+        if (incident.endTime) {
+          end = incident.endTime?.toDate ? incident.endTime.toDate() : new Date(incident.endTime);
+        }
+        
+        return {
+          'Incident ID': incident.id,
+          'Line Name': incident.lineName,
+          'Machine Name': incident.machineName,
+          'Status': incident.status,
+          'Type': incident.type === 'out_of_order' ? 'Out of Order' : 'Maintenance',
+          'Start Time': start ? format(start, 'yyyy-MM-dd HH:mm:ss') : 'N/A',
+          'End Time': end ? format(end, 'yyyy-MM-dd HH:mm:ss') : 'Ongoing',
+          'Duration (Minutes)': incident.durationMinutes || (end && start ? Math.ceil((end.getTime() - start.getTime()) / 60000) : 'Ongoing'),
+          'Total Jigs': incident.totalJigs || 1,
+          'Stopped Jigs': incident.totalJigs ? (incident.breakdownJigs || 0) : 1,
+          'Breakdown (%)': incident.durationMinutes != null
+            ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (Number(incident.durationMinutes) / 60) * 100).toFixed(2) + '%'
+            : 'N/A',
+          'Reason Code': incident.reasonCode || 'N/A',
+          'Cause': incident.cause || 'N/A',
+          'Action Taken': incident.action || 'N/A',
+          'Reported By': formatName(incident.reportedByName || usersMap[incident.reportedBy] || incident.reportedBy),
+          'Working On By': formatName(usersMap[incident.workingOnBy] || incident.workingOnBy || 'N/A'),
+          'Resolved By': formatName(incident.resolvedByName || usersMap[incident.resolvedBy] || incident.resolvedBy || 'N/A'),
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
       
-      return {
-        'Incident ID': incident.id,
-        'Line Name': incident.lineName,
-        'Machine Name': incident.machineName,
-        'Status': incident.status,
-        'Start Time': format(start, 'yyyy-MM-dd HH:mm:ss'),
-        'End Time': end ? format(end, 'yyyy-MM-dd HH:mm:ss') : 'Ongoing',
-        'Duration (Minutes)': incident.durationMinutes || (end ? Math.ceil((end.getTime() - start.getTime()) / 60000) : 'Ongoing'),
-        'Stopped Jigs': incident.totalJigs ? (incident.breakdownJigs || 0) : 1,
-        'Breakdown (%)': incident.durationMinutes != null
-          ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (Number(incident.durationMinutes) / 60) * 100).toFixed(2) + '%'
-          : 'N/A',
-        'Reason Code': incident.reasonCode || 'N/A',
-        'Cause': incident.cause || 'N/A',
-        'Action Taken': incident.action || 'N/A',
-        'Reported By': formatName(incident.reportedByName || usersMap[incident.reportedBy] || incident.reportedBy),
-        'Acknowledged By': formatName(usersMap[incident.acknowledgedBy] || incident.acknowledgedBy || 'N/A'),
-        'Resolved By': formatName(incident.resolvedByName || usersMap[incident.resolvedBy] || incident.resolvedBy || 'N/A'),
-      };
-    });
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    
-    // Apply styling for out_of_order incidents
-    if (worksheet['!ref']) {
-      const range = XLSX.utils.decode_range(worksheet['!ref']);
-      for (let R = 1; R <= range.e.r; ++R) {
-        const incident = incidents[R - 1];
-        if (incident && incident.type === 'out_of_order') {
-          for (let C = 0; C <= range.e.c; ++C) {
-            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
-            if (!worksheet[cellAddress]) {
-              worksheet[cellAddress] = { t: 's', v: '' };
-            }
-            worksheet[cellAddress].s = {
-              fill: {
-                fgColor: { rgb: "FFF9C4" } // Light yellow
-              },
-              border: {
-                top: { style: "thick", color: { rgb: "FFB300" } }, // Golden/Amber
-                bottom: { style: "thick", color: { rgb: "FFB300" } },
-                left: C === 0 ? { style: "thick", color: { rgb: "FFB300" } } : undefined,
-                right: C === range.e.c ? { style: "thick", color: { rgb: "FFB300" } } : undefined
+      // Apply styling for out_of_order incidents
+      if (worksheet['!ref']) {
+        const range = XLSX.utils.decode_range(worksheet['!ref']);
+        for (let R = 1; R <= range.e.r; ++R) {
+          const incident = incidents[R - 1];
+          if (incident && incident.type === 'out_of_order') {
+            for (let C = 0; C <= range.e.c; ++C) {
+              const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+              if (!worksheet[cellAddress]) {
+                worksheet[cellAddress] = { t: 's', v: '' };
               }
-            };
+              worksheet[cellAddress].s = {
+                fill: {
+                  fgColor: { rgb: "FFF9C4" } // Light yellow
+                },
+                border: {
+                  top: { style: "thick", color: { rgb: "FFB300" } }, // Golden/Amber
+                  bottom: { style: "thick", color: { rgb: "FFB300" } },
+                  left: C === 0 ? { style: "thick", color: { rgb: "FFB300" } } : undefined,
+                  right: C === range.e.c ? { style: "thick", color: { rgb: "FFB300" } } : undefined
+                }
+              };
+            }
           }
         }
       }
-    }
 
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Downtime Data');
-    
-    // Generate buffer and trigger download
-    XLSX.writeFile(workbook, `Downtime_Report_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Downtime Data');
+      
+      // Generate buffer and trigger download
+      XLSX.writeFile(workbook, `Downtime_Report_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`);
+    } else {
+      if (wipEntries.length === 0) {
+        setError('No WIP data to export.');
+        return;
+      }
+
+      const exportData = wipEntries.map(entry => {
+        let createdAt: Date | null = null;
+        if (entry.createdAt) {
+          createdAt = entry.createdAt?.toDate ? entry.createdAt.toDate() : new Date(entry.createdAt);
+        }
+        return {
+          'Entry ID': entry.id,
+          'Line Name': linesMap[entry.lineId] || entry.lineId,
+          'Machine Name': machinesMap[entry.machineId] || entry.machineId,
+          'WIP Quantity': entry.wip,
+          'Date & Time': createdAt ? format(createdAt, 'yyyy-MM-dd HH:mm:ss') : 'N/A',
+          'Created By': formatName(usersMap[entry.createdBy] || entry.createdBy),
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'WIP Data');
+      
+      XLSX.writeFile(workbook, `WIP_Report_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`);
+    }
   };
 
   const handleEditClick = (incident: any) => {
@@ -143,6 +207,10 @@ export function Reports() {
     setEditReportedBy(incident.reportedBy || '');
     setEditCause(incident.cause || '');
     setEditAction(incident.action || '');
+    setEditTotalJigs(incident.totalJigs || '');
+    setEditBreakdownJigs(incident.breakdownJigs || '');
+    setEditType(incident.type || '');
+    setEditResolvedBy(incident.resolvedBy || '');
     
     // Convert Firestore timestamp to datetime-local format
     const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
@@ -160,9 +228,29 @@ export function Reports() {
       if (editStatus !== editingIncident.status) updateData.status = editStatus;
       if (editMachineName !== editingIncident.machineName) updateData.machineName = editMachineName;
       if (editLineName !== editingIncident.lineName) updateData.lineName = editLineName;
-      if (editReportedBy !== editingIncident.reportedBy) updateData.reportedBy = editReportedBy;
+      if (editReportedBy !== editingIncident.reportedBy) {
+        updateData.reportedBy = editReportedBy;
+        updateData.reportedByName = usersMap[editReportedBy] || editReportedBy;
+      }
+      if (editResolvedBy !== (editingIncident.resolvedBy || '')) {
+        updateData.resolvedBy = editResolvedBy;
+        updateData.resolvedByName = usersMap[editResolvedBy] || editResolvedBy;
+      }
+      if (editType !== (editingIncident.type || '')) updateData.type = editType;
       if (editCause !== (editingIncident.cause || '')) updateData.cause = editCause;
       if (editAction !== (editingIncident.action || '')) updateData.action = editAction;
+      
+      if (editTotalJigs !== '') {
+        if (Number(editTotalJigs) !== editingIncident.totalJigs) updateData.totalJigs = Number(editTotalJigs);
+      } else if (editingIncident.totalJigs != null) {
+        updateData.totalJigs = null;
+      }
+
+      if (editBreakdownJigs !== '') {
+        if (Number(editBreakdownJigs) !== editingIncident.breakdownJigs) updateData.breakdownJigs = Number(editBreakdownJigs);
+      } else if (editingIncident.breakdownJigs != null) {
+        updateData.breakdownJigs = null;
+      }
       
       const start = editingIncident.startTime?.toDate ? editingIncident.startTime.toDate() : new Date(editingIncident.startTime);
       if (editStartTime !== format(start, "yyyy-MM-dd'T'HH:mm")) {
@@ -217,12 +305,12 @@ export function Reports() {
           <div className="p-3 bg-green-100 text-green-700 rounded-full">
             <FileSpreadsheet size={24} />
           </div>
-          <h2 className="text-2xl font-bold text-gray-800">Downtime Reports</h2>
+          <h2 className="text-2xl font-bold text-gray-800">Export Data</h2>
         </div>
         
         <button
           onClick={handleExport}
-          disabled={loading || incidents.length === 0}
+          disabled={loading || (activeTab === 'downtime' ? incidents.length === 0 : wipEntries.length === 0)}
           className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center gap-2"
         >
           <Download size={20} />
@@ -230,61 +318,96 @@ export function Reports() {
         </button>
       </div>
 
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2 border-b pb-2">
-          <Calendar size={20} className="text-blue-600" />
-          Data Overview
-        </h3>
-        
-        {loading ? (
-          <div className="text-center py-8 text-gray-500">Loading data...</div>
-        ) : incidents.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">No downtime incidents recorded yet.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
-                  <th className="p-4 font-medium">Machine</th>
-                  <th className="p-4 font-medium">Line</th>
-                  <th className="p-4 font-medium">Status</th>
-                  <th className="p-4 font-medium">Start Time</th>
-                  <th className="p-4 font-medium">Duration</th>
-                  <th className="p-4 font-medium">Stopped Jigs</th>
-                  <th className="p-4 font-medium">Breakdown (%)</th>
-                  <th className="p-4 font-medium">Reported By</th>
-                  <th className="p-4 font-medium">Fixed By</th>
-                  {profile?.role === 'admin' && <th className="p-4 font-medium text-right">Actions</th>}
-                </tr>
-              </thead>
-              <tbody className="">
-                {incidents.slice(0, 50).map(incident => {
-                  const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-                  const isOutOfOrder = incident.type === 'out_of_order';
-                  return (
-                    <tr 
-                      key={incident.id} 
-                      className={`transition-colors ${
-                        isOutOfOrder 
-                          ? 'bg-yellow-50 outline outline-[3px] outline-amber-500 hover:bg-yellow-100 relative z-10' 
-                          : 'hover:bg-gray-50 border-b border-gray-100'
-                      }`}
-                    >
+      <div className="flex border-b border-gray-200 mb-6">
+        <button
+          onClick={() => setActiveTab('downtime')}
+          className={`py-3 px-6 font-medium text-sm transition-colors border-b-2 ${
+            activeTab === 'downtime'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          Downtime Data
+        </button>
+        <button
+          onClick={() => setActiveTab('wip')}
+          className={`py-3 px-6 font-medium text-sm transition-colors border-b-2 ${
+            activeTab === 'wip'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          WIP Data
+        </button>
+      </div>
+
+      {activeTab === 'downtime' ? (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2 border-b pb-2">
+            <Calendar size={20} className="text-blue-600" />
+            Downtime Overview
+          </h3>
+          
+          {loading ? (
+            <div className="text-center py-8 text-gray-500">Loading data...</div>
+          ) : incidents.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No downtime incidents recorded yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
+                    <th className="p-4 font-medium">Machine</th>
+                    <th className="p-4 font-medium">Line</th>
+                    <th className="p-4 font-medium">Status</th>
+                    <th className="p-4 font-medium">Type</th>
+                    <th className="p-4 font-medium">Start Time</th>
+                    <th className="p-4 font-medium">Duration</th>
+                    <th className="p-4 font-medium">Total Jigs</th>
+                    <th className="p-4 font-medium">Stopped Jigs</th>
+                    <th className="p-4 font-medium">Breakdown (%)</th>
+                    <th className="p-4 font-medium">Reported By</th>
+                    <th className="p-4 font-medium">Fixed By</th>
+                    {profile?.role === 'admin' && <th className="p-4 font-medium text-right">Actions</th>}
+                  </tr>
+                </thead>
+                <tbody className="">
+                  {incidents.slice(0, 50).map(incident => {
+                    let start: Date | null = null;
+                    if (incident.startTime) {
+                      start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
+                    }
+                    const isOutOfOrder = incident.type === 'out_of_order';
+                    return (
+                      <tr 
+                        key={incident.id} 
+                        className={`transition-colors ${
+                          isOutOfOrder 
+                            ? 'bg-yellow-50 outline outline-[3px] outline-amber-500 hover:bg-yellow-100 relative z-10' 
+                            : 'hover:bg-gray-50 border-b border-gray-100'
+                        }`}
+                      >
                       <td className="p-4 font-medium text-gray-800">{incident.machineName}</td>
                       <td className="p-4 text-gray-600">{incident.lineName}</td>
                       <td className="p-4">
                         <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${
                           incident.status === 'resolved' ? 'bg-green-100 text-green-800' :
                           incident.status === 'pending_me_review' ? 'bg-blue-100 text-blue-800' :
-                          incident.status === 'acknowledged' ? 'bg-yellow-100 text-yellow-800' :
+                          incident.status === 'working_on' ? 'bg-yellow-100 text-yellow-800' :
                           'bg-red-100 text-red-800'
                         }`}>
-                          {incident.status === 'pending_me_review' ? 'Pending Review' : incident.status}
+                          {incident.status === 'pending_me_review' ? 'Pending Review' : incident.status === 'working_on' ? 'Working On' : incident.status}
                         </span>
                       </td>
-                      <td className="p-4 text-gray-600">{format(start, 'MMM d, yyyy HH:mm')}</td>
+                      <td className="p-4 text-gray-600 capitalize">
+                        {incident.type === 'out_of_order' ? 'Out of Order' : 'Maintenance'}
+                      </td>
+                      <td className="p-4 text-gray-600">{start ? format(start, 'MMM d, yyyy HH:mm') : 'N/A'}</td>
                       <td className="p-4 font-medium text-gray-800">
                         {incident.durationMinutes ? `${incident.durationMinutes} mins` : 'Ongoing'}
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        {incident.totalJigs || 1}
                       </td>
                       <td className="p-4 text-gray-600">
                         {incident.totalJigs ? (incident.breakdownJigs || 0) : 1}
@@ -324,6 +447,58 @@ export function Reports() {
           </div>
         )}
       </div>
+      ) : (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2 border-b pb-2">
+            <Calendar size={20} className="text-blue-600" />
+            WIP Overview
+          </h3>
+          
+          {loading ? (
+            <div className="text-center py-8 text-gray-500">Loading data...</div>
+          ) : wipEntries.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No WIP entries recorded yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
+                    <th className="p-4 font-medium">Date & Time</th>
+                    <th className="p-4 font-medium">Line</th>
+                    <th className="p-4 font-medium">Machine</th>
+                    <th className="p-4 font-medium">WIP Quantity</th>
+                    <th className="p-4 font-medium">Created By</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {wipEntries.slice(0, 50).map((entry) => {
+                    let createdAt: Date | null = null;
+                    if (entry.createdAt) {
+                      createdAt = entry.createdAt?.toDate ? entry.createdAt.toDate() : new Date(entry.createdAt);
+                    }
+                    return (
+                      <tr key={entry.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="p-4 text-gray-600">
+                          {createdAt ? format(createdAt, 'MMM d, yyyy HH:mm:ss') : 'N/A'}
+                        </td>
+                        <td className="p-4 text-gray-600">{linesMap[entry.lineId] || entry.lineId}</td>
+                        <td className="p-4 text-gray-600">{machinesMap[entry.machineId] || entry.machineId}</td>
+                        <td className="p-4 font-medium text-blue-600">{entry.wip}</td>
+                        <td className="p-4 text-gray-600">{formatName(usersMap[entry.createdBy] || entry.createdBy)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {wipEntries.length > 50 && (
+                <div className="p-4 text-center text-sm text-gray-500 bg-gray-50 border-t border-gray-100">
+                  Showing latest 50 records. Export to Excel to view all {wipEntries.length} records.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Edit Modal */}
       {editingIncident && (
@@ -377,9 +552,21 @@ export function Reports() {
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="open">Open</option>
-                  <option value="acknowledged">Acknowledged</option>
+                  <option value="working_on">Working On</option>
                   <option value="pending_me_review">Pending Review</option>
                   <option value="resolved">Resolved</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={editType}
+                  onChange={(e) => setEditType(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select Type</option>
+                  <option value="maintenance">Maintenance</option>
+                  <option value="out_of_order">Out of Order</option>
                 </select>
               </div>
               <div>
@@ -402,6 +589,28 @@ export function Reports() {
                   min="0"
                 />
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Total Jigs</label>
+                  <input
+                    type="number"
+                    value={editTotalJigs}
+                    onChange={(e) => setEditTotalJigs(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    min="1"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Stopped Jigs</label>
+                  <input
+                    type="number"
+                    value={editBreakdownJigs}
+                    onChange={(e) => setEditBreakdownJigs(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    min="0"
+                  />
+                </div>
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Cause</label>
                 <textarea
@@ -417,6 +626,22 @@ export function Reports() {
                   onChange={(e) => setEditAction(e.target.value)}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-h-[60px]"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fixed By</label>
+                <select
+                  value={editResolvedBy}
+                  onChange={(e) => setEditResolvedBy(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select User</option>
+                  {Object.entries(usersMap).map(([uid, name]) => (
+                    <option key={uid} value={uid}>{name}</option>
+                  ))}
+                  {!usersMap[editResolvedBy] && editResolvedBy && (
+                    <option value={editResolvedBy}>{editResolvedBy}</option>
+                  )}
+                </select>
               </div>
               <div className="flex justify-end gap-3 mt-6">
                 <button

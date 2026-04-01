@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { collection, query, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, getDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -86,9 +86,9 @@ export function IncidentsList() {
     if (!user) return;
     try {
       await updateDoc(doc(db, 'incidents', incidentId), {
-        status: 'acknowledged',
-        acknowledgedBy: user.uid,
-        acknowledgedAt: serverTimestamp(),
+        status: 'working_on',
+        workingOnBy: user.uid,
+        workingOnAt: serverTimestamp(),
       });
     } catch (error) {
       console.error('Error acknowledging incident:', error);
@@ -117,7 +117,9 @@ export function IncidentsList() {
 
       const hasCauseAndAction = incident.cause && incident.action && incident.reasonCode;
 
-      await updateDoc(doc(db, 'incidents', incident.id), {
+      const batch = writeBatch(db);
+
+      batch.update(doc(db, 'incidents', incident.id), {
         status: hasCauseAndAction ? 'resolved' : 'pending_me_review',
         resolvedBy: user.uid,
         resolvedByName: user.displayName || user.email || 'Unknown',
@@ -125,10 +127,12 @@ export function IncidentsList() {
         durationMinutes: duration,
       });
 
-      await updateDoc(doc(db, 'machines', incident.machineId), {
+      batch.update(doc(db, 'machines', incident.machineId), {
         status: 'running',
         currentIncidentId: null,
       });
+
+      await batch.commit();
     } catch (error) {
       console.error('Error resolving incident:', error);
       setError('Failed to resolve incident.');
@@ -176,6 +180,8 @@ export function IncidentsList() {
         updates.reasonCode = selectedReasonCode;
       }
 
+      const batch = writeBatch(db);
+
       if (willResolve) {
         updates.status = 'resolved';
         
@@ -189,15 +195,16 @@ export function IncidentsList() {
           updates.endTime = serverTimestamp();
           updates.durationMinutes = duration;
           
-          await updateDoc(doc(db, 'machines', reviewingIncident.machineId), {
+          batch.update(doc(db, 'machines', reviewingIncident.machineId), {
             status: 'running',
             currentIncidentId: null,
           });
         }
       }
 
-      await updateDoc(doc(db, 'incidents', reviewingIncident.id), updates);
+      batch.update(doc(db, 'incidents', reviewingIncident.id), updates);
       
+      await batch.commit();
       setReviewingIncident(null);
       setCause('');
       setAction('');
@@ -448,7 +455,7 @@ export function IncidentsList() {
             >
               <option value="all">All Active</option>
               <option value="open">Open</option>
-              <option value="acknowledged">Acknowledged</option>
+              <option value="working_on">Working On</option>
               <option value="pending_me_review">Pending Review</option>
             </select>
           </div>
@@ -486,7 +493,7 @@ export function IncidentsList() {
                         const duration = isPendingReview && incident.durationMinutes 
                           ? incident.durationMinutes 
                           : Math.ceil((now.getTime() - start.getTime()) / 60000);
-                        const isAcknowledged = incident.status === 'acknowledged';
+                        const isWorkingOn = incident.status === 'working_on';
 
                         // Check if current user is assigned via individual assignment or group membership
                         const isUserAssigned = (() => {
@@ -526,7 +533,7 @@ export function IncidentsList() {
                         return (
                           <div key={incident.id} className={`bg-white p-6 rounded-xl shadow-sm border-l-4 border border-gray-100 ${
                             isPendingReview ? 'border-l-blue-500' : 
-                            isAcknowledged ? 'border-l-yellow-400' : 'border-l-red-500 animate-pulse-border'
+                            isWorkingOn ? 'border-l-yellow-400' : 'border-l-red-500 animate-pulse-border'
                           }`}>
                             <div className="flex justify-between items-start mb-4">
                               <div>
@@ -542,9 +549,9 @@ export function IncidentsList() {
                               </div>
                               <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${
                                 isPendingReview ? 'bg-blue-100 text-blue-800' :
-                                isAcknowledged ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                                isWorkingOn ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
                               }`}>
-                                {isPendingReview ? 'Pending Review' : incident.status}
+                                {isPendingReview ? 'Pending Review' : incident.status === 'working_on' ? 'Working On' : incident.status}
                               </span>
                             </div>
                             
@@ -597,13 +604,13 @@ export function IncidentsList() {
                             </div>
 
                             <div className="flex gap-3">
-                              {profile?.role === 'maintenance_engineer' && !isAcknowledged && !isPendingReview && isUserAssigned && (
+                              {profile?.role === 'maintenance_engineer' && !isWorkingOn && !isPendingReview && isUserAssigned && (
                                 <button
                                   onClick={() => handleAcknowledge(incident.id)}
                                   className="flex-1 py-2 bg-yellow-500 hover:bg-yellow-600 text-white font-medium rounded-lg transition-colors flex justify-center items-center gap-2"
                                 >
                                   <Wrench size={18} />
-                                  Acknowledge
+                                  Working On
                                 </button>
                               )}
                               
