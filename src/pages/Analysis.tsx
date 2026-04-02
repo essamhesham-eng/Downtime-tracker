@@ -63,7 +63,7 @@ export function Analysis() {
 
   const userGroups = useMemo(() => {
     if (!profile || !groups.length) return [];
-    return groups.filter(g => g.userIds?.includes(profile.id)).map(g => g.id);
+    return groups.filter(g => g.userIds?.includes(profile.uid)).map(g => g.id);
   }, [profile, groups]);
 
   const filteredIncidents = useMemo(() => {
@@ -129,12 +129,12 @@ export function Analysis() {
   }, [incidents, startDate, endDate, selectedLine, selectedMachine, lines, profile, userGroups, user]);
 
   // Helper to calculate duration including active incidents
-  const getIncidentDuration = (inc: any) => {
+  const getIncidentDuration = React.useCallback((inc: any) => {
     if (inc.durationMinutes != null) return inc.durationMinutes;
     if (!inc.startTime) return 0;
     const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
     return Math.ceil((new Date().getTime() - start.getTime()) / 60000);
-  };
+  }, []);
 
   // KPIs
   const totalDowntimeMinutes = filteredIncidents.reduce((acc, inc) => acc + getIncidentDuration(inc), 0);

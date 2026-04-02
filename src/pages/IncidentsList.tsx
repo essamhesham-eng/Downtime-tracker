@@ -533,7 +533,8 @@ export function IncidentsList() {
                         return (
                           <div key={incident.id} className={`bg-white p-6 rounded-xl shadow-sm border-l-4 border border-gray-100 ${
                             isPendingReview ? 'border-l-blue-500' : 
-                            isWorkingOn ? 'border-l-yellow-400' : 'border-l-red-500 animate-pulse-border'
+                            isWorkingOn ? 'border-l-yellow-400' : 
+                            incident.type === 'out_of_order' ? 'border-l-amber-500 animate-pulse-border' : 'border-l-red-500 animate-pulse-border'
                           }`}>
                             <div className="flex justify-between items-start mb-4">
                               <div>
@@ -549,7 +550,8 @@ export function IncidentsList() {
                               </div>
                               <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${
                                 isPendingReview ? 'bg-blue-100 text-blue-800' :
-                                isWorkingOn ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                                isWorkingOn ? 'bg-yellow-100 text-yellow-800' : 
+                                incident.type === 'out_of_order' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'
                               }`}>
                                 {isPendingReview ? 'Pending Review' : incident.status === 'working_on' ? 'Working On' : incident.status}
                               </span>

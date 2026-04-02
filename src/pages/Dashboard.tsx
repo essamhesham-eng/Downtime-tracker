@@ -77,15 +77,25 @@ export function Dashboard() {
     };
   }, [user]);
 
-  const getMachineIncident = (machineId: string) => {
-    return incidents.find(i => i.machineId === machineId && i.status !== 'resolved');
-  };
+  const activeIncidentsByMachine = React.useMemo(() => {
+    const map = new Map<string, Incident>();
+    incidents.forEach(i => {
+      if (i.status !== 'resolved') {
+        map.set(i.machineId, i);
+      }
+    });
+    return map;
+  }, [incidents]);
 
-  const calculateDuration = (startTime: any) => {
+  const getMachineIncident = React.useCallback((machineId: string) => {
+    return activeIncidentsByMachine.get(machineId);
+  }, [activeIncidentsByMachine]);
+
+  const calculateDuration = React.useCallback((startTime: any) => {
     if (!startTime) return 0;
     const start = startTime.toDate ? startTime.toDate() : new Date(startTime);
     return Math.ceil((now.getTime() - start.getTime()) / 60000);
-  };
+  }, [now]);
 
   return (
     <div className="space-y-6">
@@ -140,7 +150,7 @@ export function Dashboard() {
                           <div className="flex flex-col items-center group relative">
                             <div 
                               className={`w-12 h-12 rounded-full flex items-center justify-center text-white shadow-md transition-transform transform hover:scale-105 relative ${
-                                isDown ? 'bg-red-500 animate-pulse' : 'bg-green-500'
+                                isDown ? (incident?.type === 'out_of_order' ? 'bg-amber-500 animate-pulse' : 'bg-red-500 animate-pulse') : 'bg-green-500'
                               }`}
                             >
                               {machine.isCritical && (

@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, orderBy, getDocs, where, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import * as XLSX from 'xlsx-js-style';
-import { FileSpreadsheet, Download, Calendar, Edit2 } from 'lucide-react';
-import { format } from 'date-fns';
+import { FileSpreadsheet, Download, Calendar, Edit2, Filter } from 'lucide-react';
+import { format, subDays, startOfDay, endOfDay } from 'date-fns';
 
 export function Reports() {
   const { profile } = useAuth();
@@ -14,7 +14,14 @@ export function Reports() {
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const [machinesMap, setMachinesMap] = useState<Record<string, string>>({});
   const [linesMap, setLinesMap] = useState<Record<string, string>>({});
+  const [lines, setLines] = useState<any[]>([]);
+  const [machines, setMachines] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'downtime' | 'wip'>('downtime');
+
+  const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedLine, setSelectedLine] = useState('all');
+  const [selectedMachine, setSelectedMachine] = useState('all');
 
   const [editingIncident, setEditingIncident] = useState<any | null>(null);
   const [editStatus, setEditStatus] = useState('');
@@ -58,18 +65,26 @@ export function Reports() {
         // Fetch machines for mapping
         const machinesSnapshot = await getDocs(collection(db, 'machines'));
         const mMap: Record<string, string> = {};
+        const mList: any[] = [];
         machinesSnapshot.docs.forEach(doc => {
-          mMap[doc.id] = doc.data().name;
+          const data = doc.data();
+          mMap[doc.id] = data.name;
+          mList.push({ id: doc.id, ...data });
         });
         setMachinesMap(mMap);
+        setMachines(mList);
 
         // Fetch lines for mapping
         const linesSnapshot = await getDocs(collection(db, 'lines'));
         const lMap: Record<string, string> = {};
+        const lList: any[] = [];
         linesSnapshot.docs.forEach(doc => {
-          lMap[doc.id] = doc.data().name;
+          const data = doc.data();
+          lMap[doc.id] = data.name;
+          lList.push({ id: doc.id, ...data });
         });
         setLinesMap(lMap);
+        setLines(lList);
 
         const qIncidents = query(
           collection(db, 'incidents'), 
@@ -94,14 +109,53 @@ export function Reports() {
     fetchData();
   }, [profile]);
 
+  const filteredIncidents = useMemo(() => {
+    const start = startOfDay(new Date(startDate));
+    const end = endOfDay(new Date(endDate));
+    
+    return incidents.filter(inc => {
+      if (!inc.startTime) return false;
+      const incDate = inc.startTime?.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
+      if (incDate < start || incDate > end) return false;
+      
+      if (selectedLine !== 'all' && inc.lineId !== selectedLine) return false;
+      if (selectedMachine !== 'all' && inc.machineId !== selectedMachine) return false;
+      
+      return true;
+    });
+  }, [incidents, startDate, endDate, selectedLine, selectedMachine]);
+
+  const filteredWipEntries = useMemo(() => {
+    const start = startOfDay(new Date(startDate));
+    const end = endOfDay(new Date(endDate));
+    
+    return wipEntries.filter(entry => {
+      if (!entry.createdAt) return false;
+      const entryDate = entry.createdAt?.toDate ? entry.createdAt.toDate() : new Date(entry.createdAt);
+      if (entryDate < start || entryDate > end) return false;
+      
+      if (selectedLine !== 'all' && entry.lineId !== selectedLine) return false;
+      if (selectedMachine !== 'all' && entry.machineId !== selectedMachine) return false;
+      
+      return true;
+    });
+  }, [wipEntries, startDate, endDate, selectedLine, selectedMachine]);
+
+  const getIncidentDuration = (inc: any) => {
+    if (inc.durationMinutes != null) return inc.durationMinutes;
+    if (!inc.startTime) return 0;
+    const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
+    return Math.ceil((new Date().getTime() - start.getTime()) / 60000);
+  };
+
   const handleExport = () => {
     if (activeTab === 'downtime') {
-      if (incidents.length === 0) {
+      if (filteredIncidents.length === 0) {
         setError('No data to export.');
         return;
       }
 
-      const exportData = incidents.map(incident => {
+      const exportData = filteredIncidents.map(incident => {
         let start: Date | null = null;
         if (incident.startTime) {
           start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
@@ -120,11 +174,11 @@ export function Reports() {
           'Type': incident.type === 'out_of_order' ? 'Out of Order' : 'Maintenance',
           'Start Time': start ? format(start, 'yyyy-MM-dd HH:mm:ss') : 'N/A',
           'End Time': end ? format(end, 'yyyy-MM-dd HH:mm:ss') : 'Ongoing',
-          'Duration (Minutes)': incident.durationMinutes || (end && start ? Math.ceil((end.getTime() - start.getTime()) / 60000) : 'Ongoing'),
+          'Duration (Minutes)': getIncidentDuration(incident),
           'Total Jigs': incident.totalJigs || 1,
           'Stopped Jigs': incident.totalJigs ? (incident.breakdownJigs || 0) : 1,
-          'Breakdown (%)': incident.durationMinutes != null
-            ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (Number(incident.durationMinutes) / 60) * 100).toFixed(2) + '%'
+          'Breakdown (%)': getIncidentDuration(incident) > 0
+            ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (getIncidentDuration(incident) / 60) * 100).toFixed(2) + '%'
             : 'N/A',
           'Reason Code': incident.reasonCode || 'N/A',
           'Cause': incident.cause || 'N/A',
@@ -141,7 +195,7 @@ export function Reports() {
       if (worksheet['!ref']) {
         const range = XLSX.utils.decode_range(worksheet['!ref']);
         for (let R = 1; R <= range.e.r; ++R) {
-          const incident = incidents[R - 1];
+          const incident = filteredIncidents[R - 1];
           if (incident && incident.type === 'out_of_order') {
             for (let C = 0; C <= range.e.c; ++C) {
               const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
@@ -170,12 +224,12 @@ export function Reports() {
       // Generate buffer and trigger download
       XLSX.writeFile(workbook, `Downtime_Report_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`);
     } else {
-      if (wipEntries.length === 0) {
+      if (filteredWipEntries.length === 0) {
         setError('No WIP data to export.');
         return;
       }
 
-      const exportData = wipEntries.map(entry => {
+      const exportData = filteredWipEntries.map(entry => {
         let createdAt: Date | null = null;
         if (entry.createdAt) {
           createdAt = entry.createdAt?.toDate ? entry.createdAt.toDate() : new Date(entry.createdAt);
@@ -341,6 +395,58 @@ export function Reports() {
         </button>
       </div>
 
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
+        <div className="flex items-center gap-2 mb-4 text-gray-800 font-medium">
+          <Filter size={18} className="text-blue-600" />
+          Filters
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <div className="flex items-center gap-2">
+            <input 
+              type="date" 
+              value={startDate}
+              onChange={e => setStartDate(e.target.value)}
+              className="p-2 border border-gray-300 rounded-lg text-sm"
+            />
+            <span className="text-gray-500">to</span>
+            <input 
+              type="date" 
+              value={endDate}
+              onChange={e => setEndDate(e.target.value)}
+              className="p-2 border border-gray-300 rounded-lg text-sm"
+            />
+          </div>
+          
+          <select
+            value={selectedLine}
+            onChange={(e) => {
+              setSelectedLine(e.target.value);
+              setSelectedMachine('all');
+            }}
+            className="p-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
+          >
+            <option value="all">All Lines</option>
+            {lines.map(line => (
+              <option key={line.id} value={line.id}>{line.name}</option>
+            ))}
+          </select>
+
+          <select
+            value={selectedMachine}
+            onChange={(e) => setSelectedMachine(e.target.value)}
+            className="p-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
+            disabled={selectedLine === 'all'}
+          >
+            <option value="all">All Machines</option>
+            {machines
+              .filter(m => m.lineId === selectedLine)
+              .map(machine => (
+                <option key={machine.id} value={machine.id}>{machine.name}</option>
+              ))}
+          </select>
+        </div>
+      </div>
+
       {activeTab === 'downtime' ? (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2 border-b pb-2">
@@ -350,8 +456,8 @@ export function Reports() {
           
           {loading ? (
             <div className="text-center py-8 text-gray-500">Loading data...</div>
-          ) : incidents.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No downtime incidents recorded yet.</div>
+          ) : filteredIncidents.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No downtime incidents found for the selected filters.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -372,7 +478,7 @@ export function Reports() {
                   </tr>
                 </thead>
                 <tbody className="">
-                  {incidents.slice(0, 50).map(incident => {
+                  {filteredIncidents.map(incident => {
                     let start: Date | null = null;
                     if (incident.startTime) {
                       start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
@@ -404,7 +510,7 @@ export function Reports() {
                       </td>
                       <td className="p-4 text-gray-600">{start ? format(start, 'MMM d, yyyy HH:mm') : 'N/A'}</td>
                       <td className="p-4 font-medium text-gray-800">
-                        {incident.durationMinutes ? `${incident.durationMinutes} mins` : 'Ongoing'}
+                        {getIncidentDuration(incident)} mins
                       </td>
                       <td className="p-4 text-gray-600">
                         {incident.totalJigs || 1}
@@ -413,8 +519,8 @@ export function Reports() {
                         {incident.totalJigs ? (incident.breakdownJigs || 0) : 1}
                       </td>
                       <td className="p-4 text-gray-600">
-                        {incident.durationMinutes != null
-                          ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (Number(incident.durationMinutes) / 60) * 100).toFixed(2) + '%'
+                        {getIncidentDuration(incident) > 0
+                          ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (getIncidentDuration(incident) / 60) * 100).toFixed(2) + '%'
                           : '-'}
                       </td>
                       <td className="p-4 text-gray-600">
@@ -439,11 +545,6 @@ export function Reports() {
                 })}
               </tbody>
             </table>
-            {incidents.length > 50 && (
-              <div className="p-4 text-center text-sm text-gray-500 bg-gray-50 border-t border-gray-100">
-                Showing latest 50 records. Export to Excel to view all {incidents.length} records.
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -456,8 +557,8 @@ export function Reports() {
           
           {loading ? (
             <div className="text-center py-8 text-gray-500">Loading data...</div>
-          ) : wipEntries.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No WIP entries recorded yet.</div>
+          ) : filteredWipEntries.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No WIP entries found for the selected filters.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -471,7 +572,7 @@ export function Reports() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {wipEntries.slice(0, 50).map((entry) => {
+                  {filteredWipEntries.map((entry) => {
                     let createdAt: Date | null = null;
                     if (entry.createdAt) {
                       createdAt = entry.createdAt?.toDate ? entry.createdAt.toDate() : new Date(entry.createdAt);
@@ -490,11 +591,6 @@ export function Reports() {
                   })}
                 </tbody>
               </table>
-              {wipEntries.length > 50 && (
-                <div className="p-4 text-center text-sm text-gray-500 bg-gray-50 border-t border-gray-100">
-                  Showing latest 50 records. Export to Excel to view all {wipEntries.length} records.
-                </div>
-              )}
             </div>
           )}
         </div>

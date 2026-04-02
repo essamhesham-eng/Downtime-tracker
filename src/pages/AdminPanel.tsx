@@ -34,7 +34,9 @@ export function AdminPanel() {
   const [reportMessage, setReportMessage] = useState('Here is your automated downtime report.');
   const [reportFrequencies, setReportFrequencies] = useState<string[]>(['daily']);
   const [reportAnalysis, setReportAnalysis] = useState<string[]>(['kpis', 'pareto', 'top_issues']);
-  const [workingHoursPerDay, setWorkingHoursPerDay] = useState<number>(24);
+  const [workingHours, setWorkingHours] = useState<Record<string, number>>({
+    monday: 24, tuesday: 24, wednesday: 24, thursday: 24, friday: 24, saturday: 24, sunday: 24
+  });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
   const [isTestingReport, setIsTestingReport] = useState(false);
@@ -95,7 +97,16 @@ export function AdminPanel() {
         const generalSnap = await getDoc(doc(db, 'settings', 'general'));
         if (generalSnap.exists()) {
           const data = generalSnap.data();
-          if (data.workingHours) setWorkingHoursPerDay(data.workingHours);
+          if (data.workingHours) {
+            if (typeof data.workingHours === 'number') {
+              setWorkingHours({
+                monday: data.workingHours, tuesday: data.workingHours, wednesday: data.workingHours,
+                thursday: data.workingHours, friday: data.workingHours, saturday: data.workingHours, sunday: data.workingHours
+              });
+            } else {
+              setWorkingHours(data.workingHours);
+            }
+          }
         }
         
         const permSnap = await getDoc(doc(db, 'settings', 'permissions'));
@@ -327,7 +338,7 @@ export function AdminPanel() {
       }, { merge: true });
       
       await setDoc(doc(db, 'settings', 'general'), {
-        workingHours: workingHoursPerDay,
+        workingHours: workingHours,
         updatedAt: serverTimestamp()
       }, { merge: true });
       
@@ -931,21 +942,25 @@ export function AdminPanel() {
           Configure general system parameters like working hours for MTBF calculations.
         </p>
         <form onSubmit={handleSaveSettings} className="space-y-6 max-w-3xl">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-              <Clock size={16} /> Working Hours per Day
-            </label>
-            <input
-              type="number"
-              min="1"
-              max="24"
-              value={workingHoursPerDay}
-              onChange={(e) => setWorkingHoursPerDay(Number(e.target.value))}
-              className="w-full sm:w-64 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              required
-            />
-            <p className="text-xs text-gray-500 mt-1">Used to calculate total available hours for MTBF and OEE.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((day) => (
+              <div key={day}>
+                <label className="block text-sm font-medium text-gray-700 mb-1 capitalize flex items-center gap-2">
+                  <Clock size={14} /> {day}
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="24"
+                  value={workingHours[day] ?? 24}
+                  onChange={(e) => setWorkingHours({...workingHours, [day]: Number(e.target.value)})}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+            ))}
           </div>
+          <p className="text-xs text-gray-500 mt-2">Used to calculate total available hours for MTBF and OEE per day.</p>
           <div className="flex items-center gap-4 pt-4 border-t border-gray-100">
             <button
               type="submit"
