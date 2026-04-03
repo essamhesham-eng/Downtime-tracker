@@ -8,6 +8,7 @@ import {
 } from 'recharts';
 import { Clock, AlertTriangle, Activity, Wrench, Info, Loader2 } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
+import { getServerTime } from '../utils/time';
 
 export function Analysis() {
   const { profile, user } = useAuth();
@@ -16,8 +17,8 @@ export function Analysis() {
   const [lines, setLines] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
   
-  const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
-  const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [startDate, setStartDate] = useState(format(subDays(getServerTime(), 30), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState(format(getServerTime(), 'yyyy-MM-dd'));
   const [selectedLine, setSelectedLine] = useState('all');
   const [selectedMachine, setSelectedMachine] = useState('all');
   const [trendMetric, setTrendMetric] = useState<'hours' | 'events'>('hours');
@@ -133,7 +134,7 @@ export function Analysis() {
     if (inc.durationMinutes != null) return inc.durationMinutes;
     if (!inc.startTime) return 0;
     const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
-    return Math.ceil((new Date().getTime() - start.getTime()) / 60000);
+    return Math.ceil((getServerTime().getTime() - start.getTime()) / 60000);
   }, []);
 
   // KPIs

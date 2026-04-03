@@ -3,6 +3,8 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 
+import { getServerTime } from '../utils/time';
+
 export function useAlarmNotification() {
   const { profile, user } = useAuth();
   const notifiedIntervals = useRef<Record<string, number>>({});
@@ -83,7 +85,7 @@ export function useAlarmNotification() {
     };
 
     const checkAlarms = () => {
-      const now = new Date();
+      const now = getServerTime();
       currentIncidents.forEach(incident => {
         if (incident.type === 'out_of_order') return; // Don't notify MEs for out of order
 

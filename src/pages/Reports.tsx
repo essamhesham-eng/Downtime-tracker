@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import * as XLSX from 'xlsx-js-style';
 import { FileSpreadsheet, Download, Calendar, Edit2, Filter } from 'lucide-react';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
+import { getServerTime } from '../utils/time';
 
 export function Reports() {
   const { profile } = useAuth();
@@ -18,8 +19,8 @@ export function Reports() {
   const [machines, setMachines] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'downtime' | 'wip'>('downtime');
 
-  const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
-  const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [startDate, setStartDate] = useState(format(subDays(getServerTime(), 30), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState(format(getServerTime(), 'yyyy-MM-dd'));
   const [selectedLine, setSelectedLine] = useState('all');
   const [selectedMachine, setSelectedMachine] = useState('all');
 
@@ -141,12 +142,12 @@ export function Reports() {
     });
   }, [wipEntries, startDate, endDate, selectedLine, selectedMachine]);
 
-  const getIncidentDuration = (inc: any) => {
+  const getIncidentDuration = React.useCallback((inc: any) => {
     if (inc.durationMinutes != null) return inc.durationMinutes;
     if (!inc.startTime) return 0;
     const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
-    return Math.ceil((new Date().getTime() - start.getTime()) / 60000);
-  };
+    return Math.ceil((getServerTime().getTime() - start.getTime()) / 60000);
+  }, []);
 
   const handleExport = () => {
     if (activeTab === 'downtime') {
@@ -222,7 +223,7 @@ export function Reports() {
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Downtime Data');
       
       // Generate buffer and trigger download
-      XLSX.writeFile(workbook, `Downtime_Report_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`);
+      XLSX.writeFile(workbook, `Downtime_Report_${format(getServerTime(), 'yyyyMMdd_HHmmss')}.xlsx`);
     } else {
       if (filteredWipEntries.length === 0) {
         setError('No WIP data to export.');
@@ -248,7 +249,7 @@ export function Reports() {
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'WIP Data');
       
-      XLSX.writeFile(workbook, `WIP_Report_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`);
+      XLSX.writeFile(workbook, `WIP_Report_${format(getServerTime(), 'yyyyMMdd_HHmmss')}.xlsx`);
     }
   };
 

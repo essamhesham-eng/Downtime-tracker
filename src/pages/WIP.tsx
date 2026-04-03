@@ -93,7 +93,7 @@ export function WIP() {
     };
   }, []);
 
-  const handleRowChange = (lineId: string, rowId: string, field: keyof WipRow, value: string) => {
+  const handleRowChange = React.useCallback((lineId: string, rowId: string, field: keyof WipRow, value: string) => {
     dirtyLinesRef.current.add(lineId);
     setLineRows(prev => ({
       ...prev,
@@ -101,23 +101,23 @@ export function WIP() {
         row.id === rowId ? { ...row, [field]: value } : row
       )
     }));
-  };
+  }, []);
 
-  const handleAddRow = (lineId: string) => {
+  const handleAddRow = React.useCallback((lineId: string) => {
     dirtyLinesRef.current.add(lineId);
     setLineRows(prev => ({
       ...prev,
       [lineId]: [...(prev[lineId] || []), { id: Math.random().toString(36).substring(2, 9), machineId: '', wip: '' }]
     }));
-  };
+  }, []);
 
-  const handleRemoveRow = (lineId: string, rowId: string) => {
+  const handleRemoveRow = React.useCallback((lineId: string, rowId: string) => {
     dirtyLinesRef.current.add(lineId);
     setLineRows(prev => ({
       ...prev,
       [lineId]: (prev[lineId] || []).filter(row => row.id !== rowId)
     }));
-  };
+  }, []);
 
   const handleSaveWip = async (lineId: string) => {
     setIsSaving(prev => ({ ...prev, [lineId]: true }));

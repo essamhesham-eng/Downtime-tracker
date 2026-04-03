@@ -33,15 +33,17 @@ interface Incident {
   type?: string;
 }
 
+import { getServerTime } from '../utils/time';
+
 export function Dashboard() {
   const { profile, user } = useAuth();
   const [lines, setLines] = useState<Line[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [now, setNow] = useState(new Date());
+  const [now, setNow] = useState(getServerTime());
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 60000); // Update every minute
+    const timer = setInterval(() => setNow(getServerTime()), 60000); // Update every minute
     return () => clearInterval(timer);
   }, []);
 

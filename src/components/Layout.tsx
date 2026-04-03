@@ -3,6 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { LayoutDashboard, AlertTriangle, Settings, FileSpreadsheet, LogOut, Wrench, User, LineChart, ClipboardList } from 'lucide-react';
 import { useAlarmNotification } from '../hooks/useAlarmNotification';
+import { AnimatePresence, motion } from 'motion/react';
 
 export function Layout() {
   const { profile, permissions, signOut } = useAuth();
@@ -10,7 +11,7 @@ export function Layout() {
   
   const { activeAlarm, setActiveAlarm } = useAlarmNotification();
 
-  const navItems = [
+  const navItems = React.useMemo(() => [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard' },
     { path: '/report', label: 'Report Breakdown', icon: AlertTriangle, permission: 'report' },
     { path: '/incidents', label: 'Active Incidents', icon: Wrench, permission: 'incidents' },
@@ -19,13 +20,13 @@ export function Layout() {
     { path: '/reports', label: 'Export Data', icon: FileSpreadsheet, permission: 'reports' },
     { path: '/admin', label: 'Admin Panel', icon: Settings, permission: 'admin' },
     { path: '/profile', label: 'Profile', icon: User, permission: 'profile' },
-  ];
+  ], []);
 
-  const filteredNav = navItems.filter(item => {
+  const filteredNav = React.useMemo(() => navItems.filter(item => {
     if (!profile?.role) return false;
     const rolePerms = permissions[profile.role] || [];
     return rolePerms.includes(item.permission);
-  });
+  }), [navItems, profile?.role, permissions]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row">
@@ -86,7 +87,17 @@ export function Layout() {
           </button>
         </div>
         <div className="p-4 md:p-8 max-w-7xl mx-auto">
-          <Outlet />
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
         </div>
       </main>
 

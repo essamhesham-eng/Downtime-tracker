@@ -8,12 +8,14 @@ import { Wrench, CheckCircle, Clock, AlertTriangle, Filter, Trash2, ArrowUpDown,
 
 import { MultiSelect } from '../components/MultiSelect';
 
+import { getServerTime } from '../utils/time';
+
 export function IncidentsList() {
   const { user, profile } = useAuth();
   const [incidents, setIncidents] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
-  const [now, setNow] = useState(new Date());
+  const [now, setNow] = useState(getServerTime());
   const [reviewingIncident, setReviewingIncident] = useState<any | null>(null);
   const [cause, setCause] = useState('');
   const [action, setAction] = useState('');
@@ -47,7 +49,7 @@ export function IncidentsList() {
   };
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 60000);
+    const timer = setInterval(() => setNow(getServerTime()), 60000);
     return () => clearInterval(timer);
   }, []);
 
@@ -100,7 +102,7 @@ export function IncidentsList() {
     if (!user) return;
     try {
       const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-      const duration = Math.ceil((new Date().getTime() - start.getTime()) / 60000);
+      const duration = Math.ceil((getServerTime().getTime() - start.getTime()) / 60000);
 
       if (incident.type === 'out_of_order') {
         // For out of order, we prompt for a comment first
@@ -188,7 +190,7 @@ export function IncidentsList() {
         // Only set endTime and duration if they don't already exist (e.g., if line leader already marked it fixed)
         if (!reviewingIncident.endTime) {
           const start = reviewingIncident.startTime?.toDate ? reviewingIncident.startTime.toDate() : new Date(reviewingIncident.startTime);
-          const duration = Math.ceil((new Date().getTime() - start.getTime()) / 60000);
+          const duration = Math.ceil((getServerTime().getTime() - start.getTime()) / 60000);
           
           updates.resolvedBy = user.uid;
           updates.resolvedByName = user.displayName || user.email || 'Unknown';
@@ -284,7 +286,7 @@ export function IncidentsList() {
     }
   };
 
-  const maintenanceEngineers = users.filter(u => u.role === 'maintenance_engineer');
+  const maintenanceEngineers = React.useMemo(() => users.filter(u => u.role === 'maintenance_engineer'), [users]);
 
   const activeIncidents = useMemo(() => {
     let filtered = incidents.filter(i => i.status !== 'resolved');
@@ -329,12 +331,14 @@ export function IncidentsList() {
     return groups;
   }, [activeIncidents]);
 
-  const toggleLine = (line: string) => {
-    const newSet = new Set(expandedLines);
-    if (newSet.has(line)) newSet.delete(line);
-    else newSet.add(line);
-    setExpandedLines(newSet);
-  };
+  const toggleLine = React.useCallback((line: string) => {
+    setExpandedLines(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(line)) newSet.delete(line);
+      else newSet.add(line);
+      return newSet;
+    });
+  }, []);
 
   const filteredResolvedIncidents = useMemo(() => {
     let filtered = incidents.filter(i => i.status === 'resolved');
