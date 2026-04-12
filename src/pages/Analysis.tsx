@@ -6,9 +6,9 @@ import { format, subDays, isWithinInterval, startOfDay, endOfDay } from 'date-fn
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, ComposedChart
 } from 'recharts';
-import { Clock, AlertTriangle, Activity, Wrench, Info, Loader2 } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
+import { Clock, AlertTriangle, Activity, Wrench, Info, Loader2, Calendar } from 'lucide-react';
 import { getServerTime } from '../utils/time';
+import { ProductionHoursModal } from '../components/ProductionHoursModal';
 
 export function Analysis() {
   const { profile, user } = useAuth();
@@ -22,13 +22,8 @@ export function Analysis() {
   const [selectedLine, setSelectedLine] = useState('all');
   const [selectedMachine, setSelectedMachine] = useState('all');
   const [trendMetric, setTrendMetric] = useState<'hours' | 'events'>('hours');
-  const [workingHoursPerDay, setWorkingHoursPerDay] = useState<number>(24);
-  
-  const [aiInsights, setAiInsights] = useState<{paretoGroups: any[], oeeOpportunities: string[]}>({
-    paretoGroups: [],
-    oeeOpportunities: []
-  });
-  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [productionHoursData, setProductionHoursData] = useState<any[]>([]);
+  const [isProductionHoursModalOpen, setIsProductionHoursModalOpen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -45,21 +40,11 @@ export function Analysis() {
     const unsubGroups = onSnapshot(query(collection(db, 'groups')), snapshot => {
       setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
+    const unsubProductionHours = onSnapshot(query(collection(db, 'production_hours')), snapshot => {
+      setProductionHoursData(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
 
-    const fetchSettings = async () => {
-      try {
-        const generalSnap = await getDoc(doc(db, 'settings', 'general'));
-        if (generalSnap.exists()) {
-          const data = generalSnap.data();
-          if (data.workingHours) setWorkingHoursPerDay(data.workingHours);
-        }
-      } catch (err) {
-        console.error("Error fetching settings:", err);
-      }
-    };
-    fetchSettings();
-
-    return () => { unsubIncidents(); unsubMachines(); unsubLines(); unsubGroups(); };
+    return () => { unsubIncidents(); unsubMachines(); unsubLines(); unsubGroups(); unsubProductionHours(); };
   }, [user]);
 
   const userGroups = useMemo(() => {
@@ -147,9 +132,41 @@ export function Analysis() {
   const totalEvents = filteredIncidents.length;
   
   // Availability = (Planned Production Time - Downtime) / Planned Production Time
-  const diffTime = Math.abs(new Date(endDate).getTime() - new Date(startDate).getTime());
-  const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 1;
-  const totalHours = days * workingHoursPerDay;
+  const totalHours = useMemo(() => {
+    let hours = 0;
+    const start = startOfDay(new Date(startDate));
+    const end = endOfDay(new Date(endDate));
+    
+    // Create a map for quick lookup: "YYYY-MM-DD_lineId" -> hours
+    const hoursMap = new Map<string, number>();
+    productionHoursData.forEach(ph => {
+      hoursMap.set(`${ph.date}_${ph.lineId}`, ph.hours);
+    });
+
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 1;
+    
+    const linesToProcess = selectedLine === 'all' ? lines : lines.filter(l => l.id === selectedLine);
+    
+    if (linesToProcess.length === 0) {
+      return days * 9; // Fallback if no lines exist
+    }
+
+    // Iterate through each day in the range
+    for (let i = 0; i < days; i++) {
+      const currentDate = format(subDays(end, i), 'yyyy-MM-dd');
+      
+      // For each line, get the hours (default to 9 if not set)
+      linesToProcess.forEach(line => {
+        const key = `${currentDate}_${line.id}`;
+        const lineHours = hoursMap.has(key) ? hoursMap.get(key)! : 9;
+        hours += lineHours;
+      });
+    }
+    
+    return hours;
+  }, [productionHoursData, startDate, endDate, selectedLine, lines]);
+
   const availability = Math.max(0, ((totalHours - parseFloat(totalDowntimeHours)) / totalHours) * 100).toFixed(1);
 
   const mttr = totalEvents > 0 ? (totalDowntimeMinutes / totalEvents).toFixed(1) : '0';
@@ -223,62 +240,6 @@ export function Analysis() {
     });
   }, [filteredIncidents]);
 
-  // AI Analysis
-  useEffect(() => {
-    const generateAIInsights = async () => {
-      if (filteredIncidents.length === 0) return;
-      setIsAiLoading(true);
-      try {
-        const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY });
-        
-        const causes = filteredIncidents.map(i => ({
-          reasonCode: i.reasonCode || 'Uncategorized',
-          cause: i.cause || 'Unknown',
-          duration: getIncidentDuration(i)
-        }));
-
-        const prompt = `
-          Analyze the following machine downtime data:
-          ${JSON.stringify(causes)}
-          
-          Based on the reason codes, causes, and durations, provide the top 3 actionable opportunities to improve OEE (Overall Equipment Effectiveness) by reducing downtime.
-          
-          Return ONLY a JSON object with this exact structure:
-          {
-            "oeeOpportunities": [
-              "Opportunity 1",
-              "Opportunity 2",
-              "Opportunity 3"
-            ]
-          }
-        `;
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-          }
-        });
-
-        const result = JSON.parse(response.text || '{}');
-
-        setAiInsights({
-          paretoGroups: [], // No longer used from AI
-          oeeOpportunities: result.oeeOpportunities || []
-        });
-
-      } catch (error) {
-        console.error("AI Analysis failed:", error);
-      } finally {
-        setIsAiLoading(false);
-      }
-    };
-
-    const timeoutId = setTimeout(generateAIInsights, 1000); // Debounce
-    return () => clearTimeout(timeoutId);
-  }, [filteredIncidents]);
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -321,6 +282,16 @@ export function Analysis() {
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
+
+          {(profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'pd_engineer') && (
+            <button
+              onClick={() => setIsProductionHoursModalOpen(true)}
+              className="px-3 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium rounded-lg transition-colors flex items-center gap-2 text-sm border border-blue-200"
+            >
+              <Calendar size={16} />
+              Set Shift Hours
+            </button>
+          )}
         </div>
       </div>
 
@@ -571,42 +542,6 @@ export function Analysis() {
             </ResponsiveContainer>
           </div>
         </div>
-
-        {/* OEE Impact Summary */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              OEE Impact & Opportunities
-              <div className="group relative">
-                <Info size={16} className="text-gray-400 cursor-help" />
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg z-10">
-                  AI-generated recommendations based on the most significant downtime causes.
-                </div>
-              </div>
-            </h3>
-            {isAiLoading && <Loader2 className="animate-spin text-blue-500" size={20} />}
-          </div>
-          
-          <div className="flex-1 bg-blue-50 rounded-lg p-5 border border-blue-100">
-            <h4 className="font-semibold text-blue-900 mb-3">Top 3 Opportunities to Improve OEE:</h4>
-            {aiInsights.oeeOpportunities.length > 0 ? (
-              <ul className="space-y-3">
-                {aiInsights.oeeOpportunities.map((opp, idx) => (
-                  <li key={idx} className="flex gap-3 text-blue-800 text-sm">
-                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-200 text-blue-700 flex items-center justify-center font-bold text-xs">
-                      {idx + 1}
-                    </span>
-                    <span className="pt-0.5">{opp}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="text-blue-600/70 text-sm italic">
-                {isAiLoading ? 'Generating insights...' : 'Insufficient data to generate opportunities.'}
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* All Issues Table */}
@@ -673,6 +608,13 @@ export function Analysis() {
           </table>
         </div>
       </div>
+
+      {/* Production Hours Modal */}
+      <ProductionHoursModal
+        isOpen={isProductionHoursModalOpen}
+        onClose={() => setIsProductionHoursModalOpen(false)}
+        lines={lines}
+      />
     </div>
   );
 }

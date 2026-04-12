@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Crown, Info, Clock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -40,6 +40,7 @@ export function Dashboard() {
   const [lines, setLines] = useState<Line[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [productionHours, setProductionHours] = useState<Record<string, number>>({});
   const [now, setNow] = useState(getServerTime());
 
   useEffect(() => {
@@ -72,10 +73,22 @@ export function Dashboard() {
       setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident)));
     });
 
+    const todayStr = format(getServerTime(), 'yyyy-MM-dd');
+    const qHours = query(collection(db, 'production_hours'), where('date', '==', todayStr));
+    const unsubHours = onSnapshot(qHours, (snapshot) => {
+      const hoursMap: Record<string, number> = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        hoursMap[data.lineId] = data.hours;
+      });
+      setProductionHours(hoursMap);
+    });
+
     return () => {
       unsubLines();
       unsubMachines();
       unsubIncidents();
+      unsubHours();
     };
   }, [user]);
 
@@ -117,7 +130,12 @@ export function Dashboard() {
             return (
               <div key={line.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
                 <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold text-gray-800">{line.name}</h3>
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-lg font-semibold text-gray-800">{line.name}</h3>
+                    <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-full border border-blue-100">
+                      Shift: {productionHours[line.id] ?? 9}hrs
+                    </span>
+                  </div>
                   {line.wipUpdatedAt && (
                     <div className="text-xs text-gray-500 flex items-center gap-1 bg-gray-50 px-2 py-1 rounded border border-gray-100">
                       <Clock size={12} className="text-blue-500" />

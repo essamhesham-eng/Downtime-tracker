@@ -103,9 +103,26 @@
         "invitedBy": { "type": "string" }
       },
       "required": ["email", "role", "status"]
+    },
+    "ProductionHours": {
+      "title": "Production Hours",
+      "description": "Production hours for a specific line on a specific date",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "description": "YYYY-MM-DD format" },
+        "lineId": { "type": "string" },
+        "hours": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["date", "lineId", "hours"]
     }
   },
   "firestore": {
+    "/production_hours/{docId}": {
+      "schema": { "$ref": "#/entities/ProductionHours" },
+      "description": "Production hours per line per date"
+    },
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },
       "description": "User profiles and roles"

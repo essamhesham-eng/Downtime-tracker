@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, deleteDoc, getDoc, setDoc } from 'firebase/firestore';
 import { db, firebaseConfig } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Plus, Trash2, UserCog, GripVertical, Mail, Clock, Save, UserPlus, Crown } from 'lucide-react';
+import { Settings, Plus, Trash2, UserCog, GripVertical, Mail, Clock, Save, UserPlus, Crown, Edit2, X, Check } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { MultiSelect } from '../components/MultiSelect';
+import { ProductionHoursModal } from '../components/ProductionHoursModal';
 import emailjs from 'emailjs-com';
 
 export function AdminPanel() {
@@ -34,13 +35,16 @@ export function AdminPanel() {
   const [reportMessage, setReportMessage] = useState('Here is your automated downtime report.');
   const [reportFrequencies, setReportFrequencies] = useState<string[]>(['daily']);
   const [reportAnalysis, setReportAnalysis] = useState<string[]>(['kpis', 'pareto', 'top_issues']);
-  const [workingHours, setWorkingHours] = useState<Record<string, number>>({
-    monday: 24, tuesday: 24, wednesday: 24, thursday: 24, friday: 24, saturday: 24, sunday: 24
-  });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
   const [isTestingReport, setIsTestingReport] = useState(false);
   const [testReportResult, setTestReportResult] = useState<string | null>(null);
+
+  const [editingLineId, setEditingLineId] = useState<string | null>(null);
+  const [editingLineName, setEditingLineName] = useState('');
+  
+  const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
+  const [editingMachineName, setEditingMachineName] = useState('');
 
   const availableFrequencies = [
     { id: 'daily', label: 'Daily' },
@@ -66,6 +70,7 @@ export function AdminPanel() {
   const [permissions, setPermissions] = useState<any>({});
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
   const [permissionsSuccess, setPermissionsSuccess] = useState(false);
+  const [isProductionHoursModalOpen, setIsProductionHoursModalOpen] = useState(false);
 
   const availablePages = [
     { id: 'dashboard', label: 'Dashboard' },
@@ -97,16 +102,6 @@ export function AdminPanel() {
         const generalSnap = await getDoc(doc(db, 'settings', 'general'));
         if (generalSnap.exists()) {
           const data = generalSnap.data();
-          if (data.workingHours) {
-            if (typeof data.workingHours === 'number') {
-              setWorkingHours({
-                monday: data.workingHours, tuesday: data.workingHours, wednesday: data.workingHours,
-                thursday: data.workingHours, friday: data.workingHours, saturday: data.workingHours, sunday: data.workingHours
-              });
-            } else {
-              setWorkingHours(data.workingHours);
-            }
-          }
         }
         
         const permSnap = await getDoc(doc(db, 'settings', 'permissions'));
@@ -273,6 +268,32 @@ export function AdminPanel() {
     }
   };
 
+  const handleUpdateLineName = async (id: string) => {
+    if (!editingLineName.trim()) return;
+    try {
+      await updateDoc(doc(db, 'lines', id), {
+        name: editingLineName.trim()
+      });
+      setEditingLineId(null);
+    } catch (err) {
+      console.error('Error updating line name:', err);
+      setErrorMsg('Failed to update line name');
+    }
+  };
+
+  const handleUpdateMachineName = async (id: string) => {
+    if (!editingMachineName.trim()) return;
+    try {
+      await updateDoc(doc(db, 'machines', id), {
+        name: editingMachineName.trim()
+      });
+      setEditingMachineId(null);
+    } catch (err) {
+      console.error('Error updating machine name:', err);
+      setErrorMsg('Failed to update machine name');
+    }
+  };
+
   const handleDeleteLine = (lineId: string, lineName: string) => {
     setItemToDelete({ type: 'line', id: lineId, name: lineName });
   };
@@ -334,11 +355,6 @@ export function AdminPanel() {
         message: reportMessage,
         frequencies: reportFrequencies,
         analysis: reportAnalysis,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      
-      await setDoc(doc(db, 'settings', 'general'), {
-        workingHours: workingHours,
         updatedAt: serverTimestamp()
       }, { merge: true });
       
@@ -589,11 +605,20 @@ export function AdminPanel() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-3 bg-gray-100 text-gray-800 rounded-full">
-          <Settings size={24} />
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-gray-100 text-gray-800 rounded-full">
+            <Settings size={24} />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800">Admin Panel</h2>
         </div>
-        <h2 className="text-2xl font-bold text-gray-800">Admin Panel</h2>
+        <button
+          onClick={() => setIsProductionHoursModalOpen(true)}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2"
+        >
+          <Clock size={18} />
+          Manage Production Hours
+        </button>
       </div>
 
       <div className="grid grid-cols-1 gap-8">
@@ -629,8 +654,41 @@ export function AdminPanel() {
           <ul className="space-y-2 max-h-64 overflow-y-auto">
             {lines.map(line => (
               <li key={line.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100">
-                <div className="flex flex-col">
-                  <span className="font-medium text-gray-800">{line.name}</span>
+                <div className="flex flex-col flex-1 mr-4">
+                  {editingLineId === line.id ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editingLineName}
+                        onChange={(e) => setEditingLineName(e.target.value)}
+                        className="flex-1 p-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleUpdateLineName(line.id);
+                          if (e.key === 'Escape') setEditingLineId(null);
+                        }}
+                      />
+                      <button onClick={() => handleUpdateLineName(line.id)} className="text-green-600 hover:text-green-700 p-1">
+                        <Check size={16} />
+                      </button>
+                      <button onClick={() => setEditingLineId(null)} className="text-gray-500 hover:text-gray-700 p-1">
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-800">{line.name}</span>
+                      <button 
+                        onClick={() => {
+                          setEditingLineId(line.id);
+                          setEditingLineName(line.name);
+                        }} 
+                        className="text-gray-400 hover:text-blue-600 p-1"
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                    </div>
+                  )}
                   <label className="flex items-center gap-2 mt-1 cursor-pointer">
                     <input
                       type="checkbox"
@@ -740,11 +798,44 @@ export function AdminPanel() {
                                   {...provided.draggableProps}
                                   className={`flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 p-3 bg-white hover:bg-gray-50 ${snapshot.isDragging ? 'shadow-lg ring-1 ring-blue-500 z-10' : ''}`}
                                 >
-                                  <div className="flex items-center gap-3">
+                                  <div className="flex items-center gap-3 flex-1">
                                     <div {...provided.dragHandleProps} className="text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing">
                                       <GripVertical size={18} />
                                     </div>
-                                    <span className="font-medium text-gray-800">{machine.name}</span>
+                                    {editingMachineId === machine.id ? (
+                                      <div className="flex items-center gap-2 flex-1 max-w-xs">
+                                        <input
+                                          type="text"
+                                          value={editingMachineName}
+                                          onChange={(e) => setEditingMachineName(e.target.value)}
+                                          className="flex-1 p-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                          autoFocus
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleUpdateMachineName(machine.id);
+                                            if (e.key === 'Escape') setEditingMachineId(null);
+                                          }}
+                                        />
+                                        <button onClick={() => handleUpdateMachineName(machine.id)} className="text-green-600 hover:text-green-700 p-1">
+                                          <Check size={16} />
+                                        </button>
+                                        <button onClick={() => setEditingMachineId(null)} className="text-gray-500 hover:text-gray-700 p-1">
+                                          <X size={16} />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-medium text-gray-800">{machine.name}</span>
+                                        <button 
+                                          onClick={() => {
+                                            setEditingMachineId(machine.id);
+                                            setEditingMachineName(machine.name);
+                                          }} 
+                                          className="text-gray-400 hover:text-blue-600 p-1"
+                                        >
+                                          <Edit2 size={14} />
+                                        </button>
+                                      </div>
+                                    )}
                                     {machine.isCritical && <Crown size={16} className="text-yellow-500" />}
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -930,49 +1021,6 @@ export function AdminPanel() {
           </div>
         </div>
 
-      </div>
-
-      {/* System Settings */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-8">
-        <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
-          <Settings size={20} className="text-blue-600" />
-          System Settings
-        </h3>
-        <p className="text-sm text-gray-600 mb-4">
-          Configure general system parameters like working hours for MTBF calculations.
-        </p>
-        <form onSubmit={handleSaveSettings} className="space-y-6 max-w-3xl">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((day) => (
-              <div key={day}>
-                <label className="block text-sm font-medium text-gray-700 mb-1 capitalize flex items-center gap-2">
-                  <Clock size={14} /> {day}
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="24"
-                  value={workingHours[day] ?? 24}
-                  onChange={(e) => setWorkingHours({...workingHours, [day]: Number(e.target.value)})}
-                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                />
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-gray-500 mt-2">Used to calculate total available hours for MTBF and OEE per day.</p>
-          <div className="flex items-center gap-4 pt-4 border-t border-gray-100">
-            <button
-              type="submit"
-              disabled={isSavingSettings}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
-            >
-              <Save size={18} />
-              {isSavingSettings ? 'Saving...' : 'Save Settings'}
-            </button>
-            {settingsSuccess && <span className="text-green-600 font-medium text-sm">Settings saved successfully!</span>}
-          </div>
-        </form>
       </div>
 
       {/* Report Settings */}
@@ -1372,6 +1420,12 @@ export function AdminPanel() {
           </button>
         </div>
       )}
+
+      <ProductionHoursModal
+        isOpen={isProductionHoursModalOpen}
+        onClose={() => setIsProductionHoursModalOpen(false)}
+        lines={lines}
+      />
     </div>
   );
 }

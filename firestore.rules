@@ -211,6 +211,15 @@ service cloud.firestore {
              (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
+    function isValidProductionHours(data) {
+      return hasOnlyAllowedFields(['date', 'lineId', 'hours', 'updatedAt', 'updatedBy']) &&
+             data.date is string && data.date.size() > 0 &&
+             data.lineId is string && data.lineId.size() > 0 &&
+             data.hours is number &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || data.updatedBy is string);
+    }
+
     match /invitations/{email} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidInvitation(request.resource.data);
@@ -286,6 +295,13 @@ service cloud.firestore {
       allow create: if isAdmin() && isValidReasonCode(request.resource.data);
       allow update: if isAdmin() && isValidReasonCode(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
       allow delete: if isAdmin();
+    }
+
+    match /production_hours/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isManagerOrAdmin() && isValidProductionHours(request.resource.data);
+      allow update: if isManagerOrAdmin() && isValidProductionHours(request.resource.data);
+      allow delete: if isManagerOrAdmin();
     }
   }
 }
