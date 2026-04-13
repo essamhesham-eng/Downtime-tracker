@@ -296,8 +296,8 @@ export function IncidentsList() {
       filtered = filtered.filter(i => i.type !== 'out_of_order');
     }
     
-    // Filter by assigned groups and individual assignments for non-admins/managers
-    if (profile?.role !== 'admin' && profile?.role !== 'manager' && user) {
+    // Filter by assigned groups and individual assignments for non-admins/managers/pd_engineers
+    if (profile?.role !== 'admin' && profile?.role !== 'manager' && profile?.role !== 'pd_engineer' && user) {
       const userGroups = groups.filter(g => g.userIds?.includes(user.uid));
       filtered = filtered.filter(incident => {
         // Always show incidents reported by the user
@@ -348,8 +348,8 @@ export function IncidentsList() {
       filtered = filtered.filter(i => i.type !== 'out_of_order');
     }
     
-    // Filter by assigned groups and individual assignments for non-admins/managers
-    if (profile?.role !== 'admin' && profile?.role !== 'manager' && user) {
+    // Filter by assigned groups and individual assignments for non-admins/managers/pd_engineers
+    if (profile?.role !== 'admin' && profile?.role !== 'manager' && profile?.role !== 'pd_engineer' && user) {
       const userGroups = groups.filter(g => g.userIds?.includes(user.uid));
       filtered = filtered.filter(incident => {
         // Always show incidents reported by the user
