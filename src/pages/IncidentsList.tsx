@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { collection, query, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, getDoc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, getDoc, deleteDoc, writeBatch, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -40,6 +40,15 @@ export function IncidentsList() {
   const [error, setError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<boolean>(false);
 
+  const getDisplayName = (idOrEmail: string, fallbackName?: string) => {
+    if (!idOrEmail) return fallbackName || 'Unknown';
+    const userById = users.find(u => u.id === idOrEmail);
+    if (userById && userById.displayName) return userById.displayName;
+    const userByEmail = users.find(u => u.email === idOrEmail);
+    if (userByEmail && userByEmail.displayName) return userByEmail.displayName;
+    return fallbackName || idOrEmail;
+  };
+
   const formatName = (name: string) => {
     if (!name) return 'Unknown';
     if (name.includes('@')) {
@@ -56,7 +65,8 @@ export function IncidentsList() {
   useEffect(() => {
     if (!user) return;
 
-    const q = query(collection(db, 'incidents'), orderBy('startTime', 'desc'));
+    // Limit to 200 incidents to reduce read operations
+    const q = query(collection(db, 'incidents'), orderBy('startTime', 'desc'), limit(200));
     const unsub = onSnapshot(q, (snapshot) => {
       setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
@@ -145,10 +155,20 @@ export function IncidentsList() {
     e.preventDefault();
     if (!reviewingIncident || !user) return;
     
-    const willResolve = resolve || reviewingIncident.status === 'pending_me_review' || reviewingIncident.type === 'out_of_order';
+    const willResolve = resolve || reviewingIncident.type === 'out_of_order';
     
+    if (!cause.trim() || (reviewingIncident.type !== 'out_of_order' && !action.trim())) {
+      setError('Both cause and action are required.');
+      return;
+    }
+
     if (willResolve && !selectedReasonCode && reviewingIncident.type !== 'out_of_order') {
       setError('Please select a reason code before resolving.');
+      return;
+    }
+
+    if (willResolve && !reviewingIncident.endTime && reviewingIncident.type !== 'out_of_order') {
+      setError('You must mark the machine as fixed first before resolving.');
       return;
     }
 
@@ -182,9 +202,13 @@ export function IncidentsList() {
         updates.reasonCode = selectedReasonCode;
       }
 
+      const isFixed = !!reviewingIncident.endTime;
+      const isComplete = !!(cause && action && selectedReasonCode);
+      const shouldResolveNow = willResolve || (isFixed && isComplete && reviewingIncident.type !== 'out_of_order');
+
       const batch = writeBatch(db);
 
-      if (willResolve) {
+      if (shouldResolveNow) {
         updates.status = 'resolved';
         
         // Only set endTime and duration if they don't already exist (e.g., if line leader already marked it fixed)
@@ -771,10 +795,10 @@ export function IncidentsList() {
                         ) : '-'}
                       </td>
                       <td className="p-4 text-gray-600">
-                        {formatName(incident.reportedByName || users.find(u => u.id === incident.reportedBy)?.displayName || users.find(u => u.id === incident.reportedBy)?.email || incident.reportedBy)}
+                        {formatName(getDisplayName(incident.reportedBy, incident.reportedByName))}
                       </td>
                       <td className="p-4 text-gray-600">
-                        {formatName(incident.resolvedByName || users.find(u => u.id === incident.resolvedBy)?.displayName || users.find(u => u.id === incident.resolvedBy)?.email || incident.resolvedBy || 'N/A')}
+                        {incident.resolvedBy ? formatName(getDisplayName(incident.resolvedBy, incident.resolvedByName)) : '-'}
                       </td>
                       <td className="p-4">
                         {(profile?.role === 'maintenance_engineer' || profile?.role === 'pd_engineer' || profile?.role === 'admin') && (
@@ -913,24 +937,26 @@ export function IncidentsList() {
                 >
                   Cancel
                 </button>
-                {reviewingIncident.type !== 'out_of_order' && reviewingIncident.status !== 'pending_me_review' && (
+                {reviewingIncident.type !== 'out_of_order' && (
                   <button
                     type="button"
                     onClick={(e) => submitReview(e, false)}
-                    disabled={isSubmittingReview}
+                    disabled={isSubmittingReview || !cause.trim() || !action.trim()}
                     className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
                   >
                     {isSubmittingReview ? 'Saving...' : 'Save'}
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={(e) => submitReview(e, true)}
-                  disabled={isSubmittingReview}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                >
-                  {isSubmittingReview ? 'Saving...' : (reviewingIncident.type === 'out_of_order' ? 'Back to Work' : 'Save & Resolve')}
-                </button>
+                {profile?.role !== 'maintenance_engineer' && (reviewingIncident.endTime || reviewingIncident.type === 'out_of_order') && (
+                  <button
+                    type="button"
+                    onClick={(e) => submitReview(e, true)}
+                    disabled={isSubmittingReview || !cause.trim() || (reviewingIncident.type !== 'out_of_order' && !action.trim())}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                  >
+                    {isSubmittingReview ? 'Saving...' : (reviewingIncident.type === 'out_of_order' ? 'Back to Work' : 'Save & Resolve')}
+                  </button>
+                )}
               </div>
             </form>
           </div>

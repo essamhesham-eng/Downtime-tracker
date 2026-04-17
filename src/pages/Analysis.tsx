@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, getDoc, orderBy, limit, where, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { format, subDays, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
+import { format, subDays, isWithinInterval, startOfDay, endOfDay, startOfMonth, endOfMonth } from 'date-fns';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, ComposedChart
 } from 'recharts';
@@ -21,16 +21,53 @@ export function Analysis() {
   const [endDate, setEndDate] = useState(format(getServerTime(), 'yyyy-MM-dd'));
   const [selectedLine, setSelectedLine] = useState('all');
   const [selectedMachine, setSelectedMachine] = useState('all');
-  const [trendMetric, setTrendMetric] = useState<'hours' | 'events'>('hours');
+  const [trendMetric, setTrendMetric] = useState<'hours' | 'minutes' | 'events'>('minutes');
+  const [mttrTrendMetric, setMttrTrendMetric] = useState<'minutes' | 'hours' | 'days'>('hours');
   const [productionHoursData, setProductionHoursData] = useState<any[]>([]);
   const [isProductionHoursModalOpen, setIsProductionHoursModalOpen] = useState(false);
+
+  const currentDatePreset = useMemo(() => {
+    const today = getServerTime();
+    const todayStr = format(today, 'yyyy-MM-dd');
+    if (startDate === format(subDays(today, 7), 'yyyy-MM-dd') && endDate === todayStr) return 'last7';
+    if (startDate === format(subDays(today, 30), 'yyyy-MM-dd') && endDate === todayStr) return 'last30';
+    if (startDate === format(startOfMonth(today), 'yyyy-MM-dd') && endDate === format(endOfMonth(today), 'yyyy-MM-dd')) return 'thisMonth';
+    return 'custom';
+  }, [startDate, endDate]);
+
+  const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    const today = getServerTime();
+    if (val === 'last7') {
+      setStartDate(format(subDays(today, 7), 'yyyy-MM-dd'));
+      setEndDate(format(today, 'yyyy-MM-dd'));
+    } else if (val === 'last30') {
+      setStartDate(format(subDays(today, 30), 'yyyy-MM-dd'));
+      setEndDate(format(today, 'yyyy-MM-dd'));
+    } else if (val === 'thisMonth') {
+      setStartDate(format(startOfMonth(today), 'yyyy-MM-dd'));
+      setEndDate(format(endOfMonth(today), 'yyyy-MM-dd'));
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
 
-    const unsubIncidents = onSnapshot(query(collection(db, 'incidents')), snapshot => {
-      setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    // Calculate how far back we need data (including the previous period for comparison)
+    const currentStart = startOfDay(new Date(startDate));
+    const currentEnd = endOfDay(new Date(endDate));
+    const diffTime = Math.abs(currentEnd.getTime() - currentStart.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const prevStart = subDays(currentStart, diffDays);
+    const startTimestamp = Timestamp.fromDate(prevStart);
+
+    // Limit by date to drastically reduce read quota
+    const unsubIncidents = onSnapshot(
+      query(collection(db, 'incidents'), where('startTime', '>=', startTimestamp), orderBy('startTime', 'desc'), limit(5000)), 
+      snapshot => {
+        setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }
+    );
     const unsubMachines = onSnapshot(query(collection(db, 'machines')), snapshot => {
       setMachines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
@@ -40,12 +77,15 @@ export function Analysis() {
     const unsubGroups = onSnapshot(query(collection(db, 'groups')), snapshot => {
       setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
-    const unsubProductionHours = onSnapshot(query(collection(db, 'production_hours')), snapshot => {
-      setProductionHoursData(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    const unsubProductionHours = onSnapshot(
+      query(collection(db, 'production_hours'), limit(5000)), 
+      snapshot => {
+        setProductionHoursData(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }
+    );
 
     return () => { unsubIncidents(); unsubMachines(); unsubLines(); unsubGroups(); unsubProductionHours(); };
-  }, [user]);
+  }, [user, startDate, endDate]);
 
   const userGroups = useMemo(() => {
     if (!profile || !groups.length) return [];
@@ -167,10 +207,72 @@ export function Analysis() {
     return hours;
   }, [productionHoursData, startDate, endDate, selectedLine, lines]);
 
-  const availability = Math.max(0, ((totalHours - parseFloat(totalDowntimeHours)) / totalHours) * 100).toFixed(1);
+  const effectiveDowntimeHours = useMemo(() => {
+    const effectiveMins = filteredIncidents.reduce((acc, inc) => {
+      const duration = getIncidentDuration(inc);
+      const breakdownJigs = inc.breakdownJigs || 0;
+      const totalJigs = inc.totalJigs || 0;
+      
+      if (breakdownJigs > 0 && totalJigs > 0) {
+        return acc + (duration * (breakdownJigs / totalJigs));
+      }
+      return acc + duration;
+    }, 0);
+    return effectiveMins / 60;
+  }, [filteredIncidents, getIncidentDuration]);
+
+  const availability = totalHours > 0 
+    ? Math.max(0, ((totalHours - effectiveDowntimeHours) / totalHours) * 100).toFixed(1)
+    : '0.0';
 
   const mttr = totalEvents > 0 ? (totalDowntimeMinutes / totalEvents).toFixed(1) : '0';
-  const mtbf = totalEvents > 0 ? ((totalHours * 60 - totalDowntimeMinutes) / totalEvents / 60).toFixed(1) : '0';
+  
+  const mtbf = useMemo(() => {
+    let totalDailyMtbf = 0;
+    let daysWithProduction = 0;
+
+    const start = startOfDay(new Date(startDate));
+    const end = endOfDay(new Date(endDate));
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 1;
+    
+    const linesToProcess = selectedLine === 'all' ? lines : lines.filter(l => l.id === selectedLine);
+    
+    const hoursMap = new Map<string, number>();
+    productionHoursData.forEach(ph => {
+      hoursMap.set(`${ph.date}_${ph.lineId}`, ph.hours);
+    });
+
+    for (let i = 0; i < days; i++) {
+      const currentDate = format(subDays(end, i), 'yyyy-MM-dd');
+      
+      let dailyHours = 0;
+      linesToProcess.forEach(line => {
+        const key = `${currentDate}_${line.id}`;
+        const lineHours = hoursMap.has(key) ? hoursMap.get(key)! : 9;
+        dailyHours += lineHours;
+      });
+
+      const dailyIncidents = filteredIncidents.filter(inc => {
+        if (!inc.startTime) return false;
+        const incDate = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
+        return format(incDate, 'yyyy-MM-dd') === currentDate;
+      });
+      
+      const dailyFailures = dailyIncidents.length;
+      
+      if (dailyHours > 0) {
+        daysWithProduction++;
+        if (dailyFailures > 0) {
+          totalDailyMtbf += (dailyHours / dailyFailures);
+        } else {
+          totalDailyMtbf += dailyHours;
+        }
+      }
+    }
+    
+    return daysWithProduction > 0 ? (totalDailyMtbf / daysWithProduction).toFixed(1) : '0';
+  }, [filteredIncidents, startDate, endDate, selectedLine, lines, productionHoursData]);
 
   // All Issues (Sorted by duration)
   const allIssues = [...filteredIncidents]
@@ -183,23 +285,76 @@ export function Analysis() {
     filteredIncidents.forEach(inc => {
       if (!inc.startTime) return;
       const dateObj = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
-      const date = format(dateObj, 'MMM dd');
-      const fullDate = format(dateObj, 'MMM dd, yyyy');
-      const sortKey = format(dateObj, 'yyyy-MM-dd');
       
-      if (!data[date]) data[date] = { date, fullDate, sortKey, totalHours: 0, totalEvents: 0 };
-      data[date].totalHours += getIncidentDuration(inc) / 60;
-      data[date].totalEvents += 1;
+      let formatKey = 'yyyy-MM-dd';
+      let date = format(dateObj, 'MMM dd');
+      
+      if (trendMetric === 'hours') {
+        formatKey = 'yyyy-MM-dd HH:00';
+        date = format(dateObj, 'MMM dd, HH:00');
+      } else if (trendMetric === 'minutes') {
+        formatKey = 'yyyy-MM-dd HH:mm';
+        date = format(dateObj, 'HH:mm');
+      }
+      
+      const sortKey = format(dateObj, formatKey);
+      const fullDate = format(dateObj, 'MMM dd, yyyy HH:mm');
+      
+      if (!data[sortKey]) data[sortKey] = { date, fullDate, sortKey, totalHours: 0, totalMinutes: 0, totalEvents: 0 };
+      const duration = getIncidentDuration(inc);
+      data[sortKey].totalHours += duration / 60;
+      data[sortKey].totalMinutes += duration;
+      data[sortKey].totalEvents += 1;
       
       // Group by machine category/name
       const cat = inc.machineName || 'Unknown';
-      if (!data[date][cat + '_hours']) data[date][cat + '_hours'] = 0;
-      if (!data[date][cat + '_events']) data[date][cat + '_events'] = 0;
-      data[date][cat + '_hours'] += getIncidentDuration(inc) / 60;
-      data[date].totalEvents += 1;
+      if (!data[sortKey][cat + '_hours']) data[sortKey][cat + '_hours'] = 0;
+      if (!data[sortKey][cat + '_minutes']) data[sortKey][cat + '_minutes'] = 0;
+      if (!data[sortKey][cat + '_events']) data[sortKey][cat + '_events'] = 0;
+      data[sortKey][cat + '_hours'] += duration / 60;
+      data[sortKey][cat + '_minutes'] += duration;
+      data[sortKey][cat + '_events'] += 1;
     });
     return Object.values(data).sort((a: any, b: any) => a.sortKey.localeCompare(b.sortKey));
-  }, [filteredIncidents]);
+  }, [filteredIncidents, trendMetric, getIncidentDuration]);
+
+  // MTTR Trend Data
+  const mttrTrendData = useMemo(() => {
+    const data: any = {};
+    filteredIncidents.forEach(inc => {
+      if (!inc.startTime) return;
+      const dateObj = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
+      
+      let formatKey = 'yyyy-MM-dd';
+      let displayLabel = format(dateObj, 'MMM dd');
+      
+      if (mttrTrendMetric === 'hours') {
+        formatKey = 'yyyy-MM-dd HH:00';
+        displayLabel = format(dateObj, 'MMM dd, HH:00');
+      } else if (mttrTrendMetric === 'minutes') {
+        formatKey = 'yyyy-MM-dd HH:mm';
+        displayLabel = format(dateObj, 'HH:mm');
+      }
+      
+      const key = format(dateObj, formatKey);
+      
+      if (!data[key]) {
+        data[key] = { 
+          key, 
+          label: displayLabel,
+          fullDate: format(dateObj, 'MMM dd, yyyy HH:mm'),
+          totalHours: 0, 
+          totalEvents: 0 
+        };
+      }
+      
+      const duration = getIncidentDuration(inc);
+      data[key].totalHours += duration / 60;
+      data[key].totalEvents += 1;
+    });
+    
+    return Object.values(data).sort((a: any, b: any) => a.key.localeCompare(b.key));
+  }, [filteredIncidents, mttrTrendMetric, getIncidentDuration]);
 
   // Heatmap Data (simplified as a bar chart by hour of day for the selected period)
   const heatmapData = useMemo(() => {
@@ -247,6 +402,16 @@ export function Analysis() {
         
         <div className="flex flex-wrap gap-3 bg-white p-3 rounded-xl shadow-sm border border-gray-100">
           <div className="flex items-center gap-2">
+            <select
+              value={currentDatePreset}
+              onChange={handlePresetChange}
+              className="p-2 border border-gray-300 rounded-lg text-sm bg-gray-50"
+            >
+              <option value="custom">Custom Range</option>
+              <option value="last7">Last 7 Days</option>
+              <option value="last30">Last 30 Days</option>
+              <option value="thisMonth">This Month</option>
+            </select>
             <input 
               type="date" 
               value={startDate}
@@ -314,13 +479,13 @@ export function Analysis() {
           title="Availability (OEE)" 
           value={`${availability}%`} 
           icon={<Activity className="text-green-500" />}
-          tooltip="Percentage of planned time the machines were available to run."
+          tooltip="Formula: (shift hours - sum of (each downtime * number of stopped jigs / total number of jigs)) / shift hours"
         />
         <KpiCard 
           title="MTBF" 
           value={`${mtbf}h`} 
           icon={<Wrench className="text-purple-500" />}
-          tooltip="Mean Time Between Failures: Average operational time between breakdowns."
+          tooltip="Mean Time Between Failures: Calculated for each day separately based on production hours (shift hours / number of Failures)."
         />
         <KpiCard 
           title="MTTR" 
@@ -476,6 +641,12 @@ export function Analysis() {
                 Hours
               </button>
               <button
+                onClick={() => setTrendMetric('minutes')}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${trendMetric === 'minutes' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Minutes
+              </button>
+              <button
                 onClick={() => setTrendMetric('events')}
                 className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${trendMetric === 'events' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
@@ -488,7 +659,7 @@ export function Analysis() {
               <LineChart data={trendData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="date" tick={{fontSize: 12}} />
-                <YAxis label={{ value: trendMetric === 'hours' ? 'Hours' : 'Events', angle: -90, position: 'insideLeft' }} />
+                <YAxis label={{ value: trendMetric === 'hours' ? 'Hours' : trendMetric === 'minutes' ? 'Minutes' : 'Events', angle: -90, position: 'insideLeft' }} />
                 <RechartsTooltip 
                   content={({ active, payload }) => {
                     if (active && payload && payload.length) {
@@ -497,7 +668,7 @@ export function Analysis() {
                         <div className="bg-white p-3 border border-gray-200 shadow-lg rounded-lg">
                           <p className="font-bold text-gray-800 mb-1">{data.fullDate}</p>
                           <p className="text-sm text-blue-600">
-                            {trendMetric === 'hours' ? 'Total Hours' : 'Total Events'}: <span className="font-bold">{trendMetric === 'hours' ? data.totalHours.toFixed(1) : data.totalEvents}</span>
+                            {trendMetric === 'hours' ? 'Total Hours' : trendMetric === 'minutes' ? 'Total Minutes' : 'Total Events'}: <span className="font-bold">{trendMetric === 'hours' ? data.totalHours.toFixed(1) : trendMetric === 'minutes' ? data.totalMinutes : data.totalEvents}</span>
                           </p>
                         </div>
                       );
@@ -508,9 +679,91 @@ export function Analysis() {
                 <Legend />
                 <Line 
                   type="monotone" 
-                  dataKey={trendMetric === 'hours' ? 'totalHours' : 'totalEvents'} 
-                  name={trendMetric === 'hours' ? 'Total Hours' : 'Total Events'} 
+                  dataKey={trendMetric === 'hours' ? 'totalHours' : trendMetric === 'minutes' ? 'totalMinutes' : 'totalEvents'} 
+                  name={trendMetric === 'hours' ? 'Total Hours' : trendMetric === 'minutes' ? 'Total Minutes' : 'Total Events'} 
                   stroke="#8b5cf6" 
+                  strokeWidth={3} 
+                  dot={{r: 4}} 
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* MTTR Trend Chart */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+              MTTR Trend
+              <div className="group relative">
+                <Info size={16} className="text-gray-400 cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg z-10">
+                  Daily Mean Time To Repair (MTTR) trend over the selected period.
+                </div>
+              </div>
+            </h3>
+            <div className="flex bg-gray-100 p-1 rounded-lg">
+              <button
+                onClick={() => setMttrTrendMetric('minutes')}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${mttrTrendMetric === 'minutes' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Minutes
+              </button>
+              <button
+                onClick={() => setMttrTrendMetric('hours')}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${mttrTrendMetric === 'hours' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Hours
+              </button>
+              <button
+                onClick={() => setMttrTrendMetric('days')}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${mttrTrendMetric === 'days' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Days
+              </button>
+            </div>
+          </div>
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={mttrTrendData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" tick={{fontSize: 12}} />
+                <YAxis label={{ value: mttrTrendMetric === 'minutes' ? 'Minutes' : mttrTrendMetric === 'hours' ? 'Hours' : 'Days', angle: -90, position: 'insideLeft' }} />
+                <RechartsTooltip 
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload;
+                      let mttrValueStr = '0.0';
+                      if (data.totalEvents > 0) {
+                        const mins = (data.totalHours * 60) / data.totalEvents;
+                        if (mttrTrendMetric === 'minutes') mttrValueStr = mins.toFixed(1) + ' mins';
+                        else if (mttrTrendMetric === 'hours') mttrValueStr = (mins / 60).toFixed(2) + ' hrs';
+                        else mttrValueStr = (mins / 60 / 24).toFixed(2) + ' days';
+                      }
+                      return (
+                        <div className="bg-white p-3 border border-gray-200 shadow-lg rounded-lg">
+                          <p className="font-bold text-gray-800 mb-1">{data.fullDate}</p>
+                          <p className="text-sm text-red-600">
+                            MTTR: <span className="font-bold">{mttrValueStr}</span>
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Legend />
+                <Line 
+                  type="monotone" 
+                  dataKey={(data) => {
+                    if (data.totalEvents === 0) return 0;
+                    const mins = (data.totalHours * 60) / data.totalEvents;
+                    if (mttrTrendMetric === 'minutes') return mins;
+                    if (mttrTrendMetric === 'hours') return mins / 60;
+                    return mins / 60 / 24;
+                  }} 
+                  name={`MTTR (${mttrTrendMetric})`} 
+                  stroke="#ef4444" 
                   strokeWidth={3} 
                   dot={{r: 4}} 
                 />

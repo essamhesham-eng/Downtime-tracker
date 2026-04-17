@@ -63,7 +63,7 @@ function ProtectedRoute({ children, requiredPermission }: { children: React.Reac
 }
 
 function Login() {
-  const { user, signInWithEmail } = useAuth();
+  const { user, signInWithEmail, signUpWithEmail } = useAuth();
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState('');
@@ -85,8 +85,23 @@ function Login() {
     try {
       await signInWithEmail(email, password);
     } catch (err: any) {
-      if (err.code === 'auth/invalid-credential') {
-        setError('Invalid email or password.');
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found') {
+        if (email.toLowerCase() === 'essam.bn@yahoo.com') {
+          try {
+            await signUpWithEmail(email, password);
+            return;
+          } catch (signUpErr: any) {
+            if (signUpErr.code === 'auth/email-already-in-use') {
+              setError('Invalid password. Please try again.');
+            } else if (signUpErr.code === 'auth/weak-password') {
+              setError('Password should be at least 6 characters.');
+            } else {
+              setError(signUpErr.message || 'Failed to auto-create admin account.');
+            }
+          }
+        } else {
+          setError('Invalid email or password. Access is by invitation only.');
+        }
       } else {
         setError(err.message || 'Authentication failed. Please check your credentials.');
       }
@@ -138,7 +153,7 @@ function Login() {
             disabled={loading}
             className="w-full py-3 px-4 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
           >
-            {loading ? 'Signing in...' : 'Sign in'}
+            {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
       </div>

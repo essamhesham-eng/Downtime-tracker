@@ -123,9 +123,16 @@ export function AdminPanel() {
     };
     fetchSettings();
 
-    const qLines = query(collection(db, 'lines'), orderBy('createdAt', 'asc'));
+    const qLines = query(collection(db, 'lines'));
     const unsubLines = onSnapshot(qLines, (snapshot) => {
-      setLines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const fetchedLines = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      fetchedLines.sort((a: any, b: any) => {
+        const orderA = a.order !== undefined ? a.order : 0;
+        const orderB = b.order !== undefined ? b.order : 0;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0);
+      });
+      setLines(fetchedLines);
     });
 
     const qMachines = query(collection(db, 'machines'), orderBy('createdAt', 'asc'));
@@ -344,6 +351,26 @@ export function AdminPanel() {
     setItemToDelete({ type: 'reasonCode', id: codeId, name: codeName });
   };
 
+  const handleDragEndLines = async (result: any) => {
+    if (!result.destination) return;
+    
+    const items = Array.from(lines);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+    
+    setLines(items);
+    
+    try {
+      const promises = items.map((item, index) => 
+        updateDoc(doc(db, 'lines', item.id), { order: index })
+      );
+      await Promise.all(promises);
+    } catch (error) {
+      console.error('Error updating line order:', error);
+      setErrorMsg('Failed to update line order.');
+    }
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingSettings(true);
@@ -498,13 +525,9 @@ export function AdminPanel() {
       setInvitePassword('');
       setInviteRole('pending');
     } catch (error: any) {
-      console.error('Error inviting user:', error);
+      let errorMsg = typeof error === 'string' ? error : (error.message || 'Failed to invite user.');
       
-      // Provide more helpful error messages
-      let errorMsg = error.message || 'Failed to invite user.';
-      if (errorMsg.includes('OPERATION_NOT_ALLOWED')) {
-        errorMsg = 'Email/Password sign-in is not enabled in Firebase. Please enable it in the Firebase Console (Authentication > Sign-in method).';
-      } else if (errorMsg.includes('EMAIL_EXISTS')) {
+      if (errorMsg.includes('EMAIL_EXISTS')) {
         // User exists in Firebase Auth, but might not be in the users collection.
         // We can create an invitation for them.
         try {
@@ -525,12 +548,19 @@ export function AdminPanel() {
         } catch (invError) {
           console.error('Error creating invitation:', invError);
           errorMsg = 'The email address is already in use, and failed to create an invitation.';
+          setErrorMsg(errorMsg);
         }
-      } else if (errorMsg.includes('WEAK_PASSWORD')) {
-        errorMsg = 'The password must be at least 6 characters long.';
+      } else {
+        console.error('Error inviting user:', error);
+        
+        if (errorMsg.includes('OPERATION_NOT_ALLOWED')) {
+          errorMsg = 'Email/Password sign-in is not enabled in Firebase. Please enable it in the Firebase Console (Authentication > Sign-in method).';
+        } else if (errorMsg.includes('WEAK_PASSWORD')) {
+          errorMsg = 'The password must be at least 6 characters long.';
+        }
+        
+        setErrorMsg(errorMsg);
       }
-      
-      setErrorMsg(errorMsg);
     } finally {
       setIsInviting(false);
     }
@@ -651,70 +681,92 @@ export function AdminPanel() {
             </label>
           </form>
 
-          <ul className="space-y-2 max-h-64 overflow-y-auto">
-            {lines.map(line => (
-              <li key={line.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100">
-                <div className="flex flex-col flex-1 mr-4">
-                  {editingLineId === line.id ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={editingLineName}
-                        onChange={(e) => setEditingLineName(e.target.value)}
-                        className="flex-1 p-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        autoFocus
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleUpdateLineName(line.id);
-                          if (e.key === 'Escape') setEditingLineId(null);
-                        }}
-                      />
-                      <button onClick={() => handleUpdateLineName(line.id)} className="text-green-600 hover:text-green-700 p-1">
-                        <Check size={16} />
-                      </button>
-                      <button onClick={() => setEditingLineId(null)} className="text-gray-500 hover:text-gray-700 p-1">
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-800">{line.name}</span>
-                      <button 
-                        onClick={() => {
-                          setEditingLineId(line.id);
-                          setEditingLineName(line.name);
-                        }} 
-                        className="text-gray-400 hover:text-blue-600 p-1"
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                    </div>
-                  )}
-                  <label className="flex items-center gap-2 mt-1 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={line.allowOutOfOrder || false}
-                      onChange={async (e) => {
-                        try {
-                          await updateDoc(doc(db, 'lines', line.id), {
-                            allowOutOfOrder: e.target.checked
-                          });
-                        } catch (err) {
-                          console.error('Error updating line:', err);
-                          setErrorMsg('Failed to update line');
-                        }
-                      }}
-                      className="w-3.5 h-3.5 text-amber-600 rounded border-gray-300 focus:ring-amber-500"
-                    />
-                    <span className="text-xs text-amber-600 font-medium">Allow "Out of Order"</span>
-                  </label>
-                </div>
-                <button onClick={() => handleDeleteLine(line.id, line.name)} className="text-red-500 hover:text-red-700 p-1">
-                  <Trash2 size={18} />
-                </button>
-              </li>
-            ))}
-            {lines.length === 0 && <li className="text-gray-500 text-center py-4">No lines found.</li>}
-          </ul>
+          <DragDropContext onDragEnd={handleDragEndLines}>
+            <Droppable droppableId="lines-list">
+              {(provided) => (
+                <ul 
+                  className="space-y-2 max-h-64 overflow-y-auto"
+                  {...provided.droppableProps}
+                  ref={provided.innerRef}
+                >
+                  {lines.map((line, index) => (
+                    <Draggable key={line.id} draggableId={line.id} index={index}>
+                      {(provided) => (
+                        <li 
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100"
+                        >
+                          <div {...provided.dragHandleProps} className="mr-3 text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing">
+                            <GripVertical size={20} />
+                          </div>
+                          <div className="flex flex-col flex-1 mr-4">
+                            {editingLineId === line.id ? (
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={editingLineName}
+                                  onChange={(e) => setEditingLineName(e.target.value)}
+                                  className="flex-1 p-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleUpdateLineName(line.id);
+                                    if (e.key === 'Escape') setEditingLineId(null);
+                                  }}
+                                />
+                                <button onClick={() => handleUpdateLineName(line.id)} className="text-green-600 hover:text-green-700 p-1">
+                                  <Check size={16} />
+                                </button>
+                                <button onClick={() => setEditingLineId(null)} className="text-gray-500 hover:text-gray-700 p-1">
+                                  <X size={16} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-gray-800">{line.name}</span>
+                                <button 
+                                  onClick={() => {
+                                    setEditingLineId(line.id);
+                                    setEditingLineName(line.name);
+                                  }} 
+                                  className="text-gray-400 hover:text-blue-600 p-1"
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+                              </div>
+                            )}
+                            <label className="flex items-center gap-2 mt-1 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={line.allowOutOfOrder || false}
+                                onChange={async (e) => {
+                                  try {
+                                    await updateDoc(doc(db, 'lines', line.id), {
+                                      allowOutOfOrder: e.target.checked
+                                    });
+                                  } catch (err) {
+                                    console.error('Error updating line:', err);
+                                    setErrorMsg('Failed to update line');
+                                  }
+                                }}
+                                className="w-3.5 h-3.5 text-amber-600 rounded border-gray-300 focus:ring-amber-500"
+                              />
+                              <span className="text-xs text-amber-600 font-medium">Allow "Out of Order"</span>
+                            </label>
+                          </div>
+                          <button onClick={() => handleDeleteLine(line.id, line.name)} className="text-red-500 hover:text-red-700 p-1">
+                            <Trash2 size={18} />
+                          </button>
+                        </li>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                  {lines.length === 0 && <li className="text-gray-500 text-center py-4">No lines found.</li>}
+                </ul>
+              )}
+            </Droppable>
+          </DragDropContext>
         </div>
 
         {/* Manage Machines */}

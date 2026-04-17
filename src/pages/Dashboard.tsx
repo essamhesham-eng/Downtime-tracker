@@ -68,7 +68,7 @@ export function Dashboard() {
       setMachines(fetchedMachines);
     });
 
-    const qIncidents = query(collection(db, 'incidents'));
+    const qIncidents = query(collection(db, 'incidents'), where('status', 'in', ['open', 'working_on', 'pending_me_review']));
     const unsubIncidents = onSnapshot(qIncidents, (snapshot) => {
       setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident)));
     });
@@ -92,19 +92,14 @@ export function Dashboard() {
     };
   }, [user]);
 
-  const activeIncidentsByMachine = React.useMemo(() => {
-    const map = new Map<string, Incident>();
-    incidents.forEach(i => {
-      if (i.status !== 'resolved') {
-        map.set(i.machineId, i);
-      }
-    });
-    return map;
+  const getMachineIncident = React.useCallback((machine: Machine) => {
+    if (machine.currentIncidentId) {
+      const incident = incidents.find(i => i.id === machine.currentIncidentId);
+      if (incident) return incident;
+    }
+    // Fallback if currentIncidentId is missing
+    return incidents.find(i => i.machineId === machine.id && (i.status === 'open' || i.status === 'working_on'));
   }, [incidents]);
-
-  const getMachineIncident = React.useCallback((machineId: string) => {
-    return activeIncidentsByMachine.get(machineId);
-  }, [activeIncidentsByMachine]);
 
   const calculateDuration = React.useCallback((startTime: any) => {
     if (!startTime) return 0;
@@ -149,7 +144,7 @@ export function Dashboard() {
                     <span className="text-sm text-gray-400 italic">No machines added</span>
                   ) : (
                     lineMachines.map((machine, index) => {
-                      const incident = getMachineIncident(machine.id);
+                      const incident = getMachineIncident(machine);
                       const isDown = machine.status === 'down';
                       const duration = incident ? calculateDuration(incident.startTime) : 0;
                       
