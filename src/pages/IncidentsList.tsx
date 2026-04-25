@@ -127,12 +127,12 @@ export function IncidentsList() {
         return;
       }
 
-      const hasCauseAndAction = incident.cause && incident.action && incident.reasonCode;
+      const isComplete = !!incident.reasonCode;
 
       const batch = writeBatch(db);
 
       batch.update(doc(db, 'incidents', incident.id), {
-        status: hasCauseAndAction ? 'resolved' : 'pending_me_review',
+        status: isComplete ? 'resolved' : 'pending_me_review',
         resolvedBy: user.uid,
         resolvedByName: user.displayName || user.email || 'Unknown',
         endTime: serverTimestamp(),
@@ -157,11 +157,6 @@ export function IncidentsList() {
     
     const willResolve = resolve || reviewingIncident.type === 'out_of_order';
     
-    if (!cause.trim() || (reviewingIncident.type !== 'out_of_order' && !action.trim())) {
-      setError('Both cause and action are required.');
-      return;
-    }
-
     if (willResolve && !selectedReasonCode && reviewingIncident.type !== 'out_of_order') {
       setError('Please select a reason code before resolving.');
       return;
@@ -202,8 +197,8 @@ export function IncidentsList() {
         updates.reasonCode = selectedReasonCode;
       }
 
-      const isFixed = !!reviewingIncident.endTime;
-      const isComplete = !!(cause && action && selectedReasonCode);
+      const isFixed = reviewingIncident.status === 'pending_me_review' || !!reviewingIncident.endTime;
+      const isComplete = !!selectedReasonCode;
       const shouldResolveNow = willResolve || (isFixed && isComplete && reviewingIncident.type !== 'out_of_order');
 
       const batch = writeBatch(db);
@@ -654,7 +649,7 @@ export function IncidentsList() {
                                 </button>
                               )}
 
-                              {(profile?.role === 'maintenance_engineer' || profile?.role === 'pd_engineer' || profile?.role === 'admin') && (isUserAssigned || profile?.role === 'admin' || profile?.role === 'pd_engineer') && incident.type !== 'out_of_order' && (
+                              {(profile?.role === 'maintenance_engineer' || profile?.role === 'pd_engineer' || profile?.role === 'admin' || profile?.role === 'manager') && (isUserAssigned || profile?.role === 'admin' || profile?.role === 'pd_engineer' || profile?.role === 'manager') && incident.type !== 'out_of_order' && (
                                 <button
                                   onClick={() => {
                                     setReviewingIncident(incident);
@@ -801,7 +796,7 @@ export function IncidentsList() {
                         {incident.resolvedBy ? formatName(getDisplayName(incident.resolvedBy, incident.resolvedByName)) : '-'}
                       </td>
                       <td className="p-4">
-                        {(profile?.role === 'maintenance_engineer' || profile?.role === 'pd_engineer' || profile?.role === 'admin') && (
+                        {(profile?.role === 'maintenance_engineer' || profile?.role === 'pd_engineer' || profile?.role === 'admin' || profile?.role === 'manager') && (
                           <button
                             onClick={() => {
                               setReviewingIncident(incident);
@@ -848,7 +843,6 @@ export function IncidentsList() {
                     onChange={(e) => setCause(e.target.value)}
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-h-[80px]"
                     placeholder="Describe why the machine was out of order..."
-                    required
                   />
                 </div>
               ) : (
@@ -860,7 +854,6 @@ export function IncidentsList() {
                       onChange={(e) => setCause(e.target.value)}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-h-[80px]"
                       placeholder="Describe what caused the downtime..."
-                      required
                     />
                     <div className="mt-2">
                       <label className="flex items-center gap-2 cursor-pointer text-sm text-blue-600 hover:text-blue-800">
@@ -899,7 +892,6 @@ export function IncidentsList() {
                       onChange={(e) => setAction(e.target.value)}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-h-[80px]"
                       placeholder="Describe the action taken to resolve the issue..."
-                      required
                     />
                     <div className="mt-2">
                       <label className="flex items-center gap-2 cursor-pointer text-sm text-blue-600 hover:text-blue-800">
@@ -941,17 +933,17 @@ export function IncidentsList() {
                   <button
                     type="button"
                     onClick={(e) => submitReview(e, false)}
-                    disabled={isSubmittingReview || !cause.trim() || !action.trim()}
+                    disabled={isSubmittingReview}
                     className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
                   >
                     {isSubmittingReview ? 'Saving...' : 'Save'}
                   </button>
                 )}
-                {profile?.role !== 'maintenance_engineer' && (reviewingIncident.endTime || reviewingIncident.type === 'out_of_order') && (
+                {profile?.role !== 'maintenance_engineer' && profile?.role !== 'manager' && (reviewingIncident.endTime || reviewingIncident.type === 'out_of_order') && (
                   <button
                     type="button"
                     onClick={(e) => submitReview(e, true)}
-                    disabled={isSubmittingReview || !cause.trim() || (reviewingIncident.type !== 'out_of_order' && !action.trim())}
+                    disabled={isSubmittingReview}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
                   >
                     {isSubmittingReview ? 'Saving...' : (reviewingIncident.type === 'out_of_order' ? 'Back to Work' : 'Save & Resolve')}

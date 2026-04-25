@@ -8,7 +8,7 @@ export const fetchServerTimeOffset = async () => {
     const start = Date.now();
     // Try to get time from worldtimeapi first, as it's very reliable for this
     try {
-      const response = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC', { cache: 'no-store' });
+      const response = await window.fetch('https://worldtimeapi.org/api/timezone/Etc/UTC', { cache: 'no-store' });
       if (response.ok) {
         const data = await response.json();
         const serverTime = new Date(data.utc_datetime).getTime();
@@ -24,7 +24,7 @@ export const fetchServerTimeOffset = async () => {
     }
 
     // Fallback to HEAD request on current origin
-    const response = await fetch(window.location.origin, { method: 'HEAD', cache: 'no-store' });
+    const response = await window.fetch(window.location.origin, { method: 'HEAD', cache: 'no-store' });
     const dateHeader = response.headers.get('Date');
     
     if (dateHeader) {

@@ -21,7 +21,7 @@ export function Analysis() {
   const [endDate, setEndDate] = useState(format(getServerTime(), 'yyyy-MM-dd'));
   const [selectedLine, setSelectedLine] = useState('all');
   const [selectedMachine, setSelectedMachine] = useState('all');
-  const [trendMetric, setTrendMetric] = useState<'hours' | 'minutes' | 'events'>('minutes');
+  const [trendMetric, setTrendMetric] = useState<'hours' | 'minutes' | 'days' | 'events'>('minutes');
   const [mttrTrendMetric, setMttrTrendMetric] = useState<'minutes' | 'hours' | 'days'>('hours');
   const [productionHoursData, setProductionHoursData] = useState<any[]>([]);
   const [isProductionHoursModalOpen, setIsProductionHoursModalOpen] = useState(false);
@@ -38,7 +38,14 @@ export function Analysis() {
   const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
     const today = getServerTime();
-    if (val === 'last7') {
+    if (val === 'today') {
+      setStartDate(format(today, 'yyyy-MM-dd'));
+      setEndDate(format(today, 'yyyy-MM-dd'));
+    } else if (val === 'lastDay') {
+      const yesterday = subDays(today, 1);
+      setStartDate(format(yesterday, 'yyyy-MM-dd'));
+      setEndDate(format(yesterday, 'yyyy-MM-dd'));
+    } else if (val === 'last7') {
       setStartDate(format(subDays(today, 7), 'yyyy-MM-dd'));
       setEndDate(format(today, 'yyyy-MM-dd'));
     } else if (val === 'last30') {
@@ -294,7 +301,10 @@ export function Analysis() {
         date = format(dateObj, 'MMM dd, HH:00');
       } else if (trendMetric === 'minutes') {
         formatKey = 'yyyy-MM-dd HH:mm';
-        date = format(dateObj, 'HH:mm');
+        date = format(dateObj, 'MMM dd, HH:mm');
+      } else if (trendMetric === 'days') {
+        formatKey = 'yyyy-MM-dd';
+        date = format(dateObj, 'MMM dd');
       }
       
       const sortKey = format(dateObj, formatKey);
@@ -333,7 +343,7 @@ export function Analysis() {
         displayLabel = format(dateObj, 'MMM dd, HH:00');
       } else if (mttrTrendMetric === 'minutes') {
         formatKey = 'yyyy-MM-dd HH:mm';
-        displayLabel = format(dateObj, 'HH:mm');
+        displayLabel = format(dateObj, 'MMM dd, HH:mm');
       }
       
       const key = format(dateObj, formatKey);
@@ -405,53 +415,59 @@ export function Analysis() {
             <select
               value={currentDatePreset}
               onChange={handlePresetChange}
-              className="p-2 border border-gray-300 rounded-lg text-sm bg-gray-50"
+              className="p-2 border border-gray-300 rounded-lg text-sm bg-gray-50 flex-grow"
             >
               <option value="custom">Custom Range</option>
+              <option value="today">This Day</option>
+              <option value="lastDay">Last Day</option>
               <option value="last7">Last 7 Days</option>
               <option value="last30">Last 30 Days</option>
               <option value="thisMonth">This Month</option>
             </select>
-            <input 
-              type="date" 
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              className="p-2 border border-gray-300 rounded-lg text-sm"
-            />
-            <span className="text-gray-500">to</span>
-            <input 
-              type="date" 
-              value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              className="p-2 border border-gray-300 rounded-lg text-sm"
-            />
+            <div className="flex items-center gap-1 flex-wrap">
+              <input 
+                type="date" 
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                className="p-2 border border-gray-300 rounded-lg text-sm flex-grow"
+              />
+              <span className="text-gray-500">to</span>
+              <input 
+                type="date" 
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                className="p-2 border border-gray-300 rounded-lg text-sm flex-grow"
+              />
+            </div>
           </div>
           
-          <select 
-            value={selectedLine}
-            onChange={e => { setSelectedLine(e.target.value); setSelectedMachine('all'); }}
-            className="p-2 border border-gray-300 rounded-lg text-sm"
-          >
-            <option value="all">All Lines</option>
-            {lines.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
+          <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+            <select 
+              value={selectedLine}
+              onChange={e => { setSelectedLine(e.target.value); setSelectedMachine('all'); }}
+              className="p-2 border border-gray-300 rounded-lg text-sm flex-grow sm:flex-none sm:w-40"
+            >
+              <option value="all">All Lines</option>
+              {lines.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
 
-          <select 
-            value={selectedMachine}
-            onChange={e => setSelectedMachine(e.target.value)}
-            className="p-2 border border-gray-300 rounded-lg text-sm"
-            disabled={selectedLine === 'all'}
-          >
-            <option value="all">All Machines</option>
-            {machines.filter(m => m.lineId === selectedLine).map(m => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
+            <select 
+              value={selectedMachine}
+              onChange={e => setSelectedMachine(e.target.value)}
+              className="p-2 border border-gray-300 rounded-lg text-sm flex-grow sm:flex-none sm:w-40"
+              disabled={selectedLine === 'all'}
+            >
+              <option value="all">All Machines</option>
+              {machines.filter(m => m.lineId === selectedLine).map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
 
           {(profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'pd_engineer') && (
             <button
               onClick={() => setIsProductionHoursModalOpen(true)}
-              className="px-3 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium rounded-lg transition-colors flex items-center gap-2 text-sm border border-blue-200"
+              className="px-3 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium rounded-lg transition-colors flex items-center justify-center gap-2 text-sm border border-blue-200 w-full lg:w-auto"
             >
               <Calendar size={16} />
               Set Shift Hours
@@ -622,8 +638,8 @@ export function Analysis() {
         </div>
 
         {/* Trend Chart */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <div className="flex justify-between items-center mb-4">
+        <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
             <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
               Downtime Trend
               <div className="group relative">
@@ -633,22 +649,28 @@ export function Analysis() {
                 </div>
               </div>
             </h3>
-            <div className="flex bg-gray-100 p-1 rounded-lg">
+            <div className="flex bg-gray-100 p-1 rounded-lg w-full sm:w-auto overflow-x-auto justify-between sm:justify-start">
+              <button
+                onClick={() => setTrendMetric('days')}
+                className={`px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${trendMetric === 'days' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Days
+              </button>
               <button
                 onClick={() => setTrendMetric('hours')}
-                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${trendMetric === 'hours' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${trendMetric === 'hours' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 Hours
               </button>
               <button
                 onClick={() => setTrendMetric('minutes')}
-                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${trendMetric === 'minutes' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${trendMetric === 'minutes' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 Minutes
               </button>
               <button
                 onClick={() => setTrendMetric('events')}
-                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${trendMetric === 'events' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${trendMetric === 'events' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 Events
               </button>
@@ -658,8 +680,14 @@ export function Analysis() {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={trendData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="date" tick={{fontSize: 12}} />
-                <YAxis label={{ value: trendMetric === 'hours' ? 'Hours' : trendMetric === 'minutes' ? 'Minutes' : 'Events', angle: -90, position: 'insideLeft' }} />
+                <XAxis 
+                  dataKey="date" 
+                  tick={{fontSize: 11}} 
+                  angle={-45} 
+                  textAnchor="end" 
+                  height={70}
+                />
+                <YAxis label={{ value: trendMetric === 'hours' ? 'Hours' : trendMetric === 'minutes' ? 'Minutes' : trendMetric === 'days' ? 'Hours (Sum)' : 'Events', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#6b7280', fontSize: 12 } }} />
                 <RechartsTooltip 
                   content={({ active, payload }) => {
                     if (active && payload && payload.length) {
@@ -668,7 +696,7 @@ export function Analysis() {
                         <div className="bg-white p-3 border border-gray-200 shadow-lg rounded-lg">
                           <p className="font-bold text-gray-800 mb-1">{data.fullDate}</p>
                           <p className="text-sm text-blue-600">
-                            {trendMetric === 'hours' ? 'Total Hours' : trendMetric === 'minutes' ? 'Total Minutes' : 'Total Events'}: <span className="font-bold">{trendMetric === 'hours' ? data.totalHours.toFixed(1) : trendMetric === 'minutes' ? data.totalMinutes : data.totalEvents}</span>
+                            {trendMetric === 'hours' ? 'Total Hours' : trendMetric === 'minutes' ? 'Total Minutes' : trendMetric === 'days' ? 'Total Hours' : 'Total Events'}: <span className="font-bold">{trendMetric === 'hours' || trendMetric === 'days' ? data.totalHours.toFixed(1) : trendMetric === 'minutes' ? data.totalMinutes : data.totalEvents}</span>
                           </p>
                         </div>
                       );
@@ -679,8 +707,8 @@ export function Analysis() {
                 <Legend />
                 <Line 
                   type="monotone" 
-                  dataKey={trendMetric === 'hours' ? 'totalHours' : trendMetric === 'minutes' ? 'totalMinutes' : 'totalEvents'} 
-                  name={trendMetric === 'hours' ? 'Total Hours' : trendMetric === 'minutes' ? 'Total Minutes' : 'Total Events'} 
+                  dataKey={trendMetric === 'hours' || trendMetric === 'days' ? 'totalHours' : trendMetric === 'minutes' ? 'totalMinutes' : 'totalEvents'} 
+                  name={trendMetric === 'hours' || trendMetric === 'days' ? 'Total Hours' : trendMetric === 'minutes' ? 'Total Minutes' : 'Total Events'} 
                   stroke="#8b5cf6" 
                   strokeWidth={3} 
                   dot={{r: 4}} 
@@ -691,8 +719,8 @@ export function Analysis() {
         </div>
 
         {/* MTTR Trend Chart */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <div className="flex justify-between items-center mb-4">
+        <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
             <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
               MTTR Trend
               <div className="group relative">
@@ -702,22 +730,22 @@ export function Analysis() {
                 </div>
               </div>
             </h3>
-            <div className="flex bg-gray-100 p-1 rounded-lg">
+            <div className="flex bg-gray-100 p-1 rounded-lg w-full sm:w-auto justify-between sm:justify-start">
               <button
                 onClick={() => setMttrTrendMetric('minutes')}
-                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${mttrTrendMetric === 'minutes' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${mttrTrendMetric === 'minutes' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 Minutes
               </button>
               <button
                 onClick={() => setMttrTrendMetric('hours')}
-                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${mttrTrendMetric === 'hours' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${mttrTrendMetric === 'hours' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 Hours
               </button>
               <button
                 onClick={() => setMttrTrendMetric('days')}
-                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${mttrTrendMetric === 'days' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${mttrTrendMetric === 'days' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 Days
               </button>
@@ -727,8 +755,14 @@ export function Analysis() {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={mttrTrendData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" tick={{fontSize: 12}} />
-                <YAxis label={{ value: mttrTrendMetric === 'minutes' ? 'Minutes' : mttrTrendMetric === 'hours' ? 'Hours' : 'Days', angle: -90, position: 'insideLeft' }} />
+                <XAxis 
+                  dataKey="label" 
+                  tick={{fontSize: 11}} 
+                  angle={-45} 
+                  textAnchor="end" 
+                  height={70}
+                />
+                <YAxis label={{ value: mttrTrendMetric === 'minutes' ? 'Minutes' : mttrTrendMetric === 'hours' ? 'Hours' : 'Days', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#6b7280', fontSize: 12 } }} />
                 <RechartsTooltip 
                   content={({ active, payload }) => {
                     if (active && payload && payload.length) {
@@ -881,14 +915,14 @@ function KpiCard({ title, value, trend, icon, tooltip }: { title: string, value:
           {tooltip}
         </div>
       </div>
-      <div className="flex items-center gap-3 mb-2">
-        <div className="p-2 bg-gray-50 rounded-lg">
+      <div className="flex items-center gap-2 sm:gap-3 mb-2">
+        <div className="p-1.5 sm:p-2 bg-gray-50 rounded-lg">
           {icon}
         </div>
-        <h3 className="text-sm font-medium text-gray-600">{title}</h3>
+        <h3 className="text-xs sm:text-sm font-medium text-gray-600">{title}</h3>
       </div>
       <div className="flex items-end gap-2">
-        <span className="text-2xl font-bold text-gray-900">{value}</span>
+        <span className="text-xl sm:text-2xl font-bold text-gray-900">{value}</span>
         {trend !== undefined && (
           <span className={`text-xs font-medium mb-1 ${trend > 0 ? 'text-red-500' : trend < 0 ? 'text-green-500' : 'text-gray-500'}`}>
             {trend > 0 ? '+' : ''}{trend.toFixed(1)}%

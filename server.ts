@@ -4,7 +4,7 @@ import path from 'path';
 import cron from 'node-cron';
 import nodemailer from 'nodemailer';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, getDocs, doc, getDoc, updateDoc, deleteDoc, query, where, Timestamp } from 'firebase/firestore';
 import fs from 'fs';
 
@@ -30,8 +30,18 @@ async function startServer() {
   try {
     await signInWithEmailAndPassword(auth, 'cron@sharestate.com', 'CronPassword123!');
     console.log('Backend authenticated with Firebase');
-  } catch (error) {
-    console.error('Backend Firebase authentication failed:', error);
+  } catch (error: any) {
+    console.error('Backend Firebase authentication failed:', error.message);
+    try {
+      await createUserWithEmailAndPassword(auth, 'cron@sharestate.com', 'CronPassword123!');
+      console.log('Backend cron user created and authenticated.');
+    } catch (createError: any) {
+      if (createError.code === 'auth/email-already-in-use') {
+         console.log('Cron user exists but login failed (maybe wrong password or credential issue).');
+      } else {
+         console.error('Failed to create cron user:', createError.message);
+      }
+    }
   }
 
   // Set up Nodemailer (using Ethereal for testing if no real SMTP provided)

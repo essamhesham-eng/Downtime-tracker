@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, orderBy, getDocs, where, doc, updateDoc, setDoc, addDoc, serverTimestamp, limit, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, where, doc, updateDoc, setDoc, deleteDoc, addDoc, serverTimestamp, limit, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import * as XLSX from 'xlsx-js-style';
-import { FileSpreadsheet, Download, Calendar, Edit2, Filter, Save, Loader2, GripVertical } from 'lucide-react';
+import { FileSpreadsheet, Download, Calendar, Edit2, Filter, Save, Loader2, GripVertical, Trash2 } from 'lucide-react';
 import { format, subDays, addDays, startOfDay, endOfDay, eachDayOfInterval } from 'date-fns';
 import { getServerTime } from '../utils/time';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -12,6 +12,7 @@ export function Reports() {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [incidents, setIncidents] = useState<any[]>([]);
+  const [wipSnapshots, setWipSnapshots] = useState<any[]>([]);
   const [wipEntries, setWipEntries] = useState<any[]>([]);
   const [productionHours, setProductionHours] = useState<any[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
@@ -31,7 +32,11 @@ export function Reports() {
   const [selectedLine, setSelectedLine] = useState('all');
   const [selectedMachine, setSelectedMachine] = useState('all');
 
+  const [selectedIncidents, setSelectedIncidents] = useState<string[]>([]);
+  const [selectedWipEntries, setSelectedWipEntries] = useState<string[]>([]);
+
   const [editingIncident, setEditingIncident] = useState<any | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<{ ids: string[], type: 'incident' | 'wip' } | null>(null);
   const [editStatus, setEditStatus] = useState('');
   const [editDuration, setEditDuration] = useState<number | ''>('');
   const [editMachineName, setEditMachineName] = useState('');
@@ -40,6 +45,7 @@ export function Reports() {
   const [editStartTime, setEditStartTime] = useState('');
   const [editCause, setEditCause] = useState('');
   const [editAction, setEditAction] = useState('');
+  const [editReasonCode, setEditReasonCode] = useState('');
   const [editTotalJigs, setEditTotalJigs] = useState<number | ''>('');
   const [editBreakdownJigs, setEditBreakdownJigs] = useState<number | ''>('');
   const [editType, setEditType] = useState('');
@@ -72,7 +78,8 @@ export function Reports() {
       setLoading(true);
       try {
         // Fetch users for mapping and display
-        const usersSnapshot = await getDocs(collection(db, 'users'));
+        let step = 'users';
+        const usersSnapshot = await getDocs(collection(db, 'users')).catch(e => { throw new Error(step + ' failed: ' + e.message) });
         const uMap: Record<string, string> = {};
         const uList: any[] = [];
         usersSnapshot.docs.forEach(doc => {
@@ -84,7 +91,8 @@ export function Reports() {
         setUsers(uList);
 
         // Fetch machines for mapping
-        const machinesSnapshot = await getDocs(collection(db, 'machines'));
+        step = 'machines';
+        const machinesSnapshot = await getDocs(collection(db, 'machines')).catch(e => { throw new Error(step + ' failed: ' + e.message) });
         const mMap: Record<string, string> = {};
         const mList: any[] = [];
         machinesSnapshot.docs.forEach(doc => {
@@ -96,7 +104,8 @@ export function Reports() {
         setMachines(mList);
 
         // Fetch lines for mapping
-        const linesSnapshot = await getDocs(collection(db, 'lines'));
+        step = 'lines';
+        const linesSnapshot = await getDocs(collection(db, 'lines')).catch(e => { throw new Error(step + ' failed: ' + e.message) });
         const lMap: Record<string, string> = {};
         const lList: any[] = [];
         linesSnapshot.docs.forEach(doc => {
@@ -113,31 +122,61 @@ export function Reports() {
         setLinesMap(lMap);
         setLines(lList);
 
+        step = 'incidents';
         const qIncidents = query(
           collection(db, 'incidents'), 
           orderBy('startTime', 'desc'),
           limit(2000)
         );
-        const snapshotIncidents = await getDocs(qIncidents);
+        const snapshotIncidents = await getDocs(qIncidents).catch(e => { throw new Error(step + ' failed: ' + e.message) });
         setIncidents(snapshotIncidents.docs.map(doc => ({ id: doc.id, ...doc.data() })));
 
+        step = 'wip_snapshots';
+        const qSnapshots = query(
+          collection(db, 'wip_snapshots'),
+          orderBy('createdAt', 'desc'),
+          limit(1000)
+        );
+        const snapshotsResult = await getDocs(qSnapshots).catch(e => { throw new Error(step + ' failed: ' + e.message) });
+        setWipSnapshots(snapshotsResult.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        step = 'wip_entries';
         const qWip = query(
           collection(db, 'wip_entries'),
           orderBy('createdAt', 'desc'),
-          limit(2000)
+          limit(5000)
         );
-        const snapshotWip = await getDocs(qWip);
+        const snapshotWip = await getDocs(qWip).catch(e => { throw new Error(step + ' failed: ' + e.message) });
         setWipEntries(snapshotWip.docs.map(doc => ({ id: doc.id, ...doc.data() })));
 
+        step = 'production_hours';
         const qProdHours = query(
           collection(db, 'production_hours'),
           orderBy('date', 'desc'),
           limit(2000)
         );
-        const snapshotProdHours = await getDocs(qProdHours);
+        const snapshotProdHours = await getDocs(qProdHours).catch(e => { throw new Error(step + ' failed: ' + e.message) });
         setProductionHours(snapshotProdHours.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      } catch (error) {
-        console.error('Error fetching data:', error);
+      } catch (error: any) {
+        let stepPath = '';
+        if (error.message.includes('users failed')) stepPath = 'users';
+        else if (error.message.includes('machines failed')) stepPath = 'machines';
+        else if (error.message.includes('lines failed')) stepPath = 'lines';
+        else if (error.message.includes('incidents failed')) stepPath = 'incidents';
+        else if (error.message.includes('wip_snapshots failed')) stepPath = 'wip_snapshots';
+        else if (error.message.includes('wip_entries failed')) stepPath = 'wip_entries';
+        else if (error.message.includes('production_hours failed')) stepPath = 'production_hours';
+
+        const errInfo = {
+          error: error.message || String(error),
+          operationType: 'get',
+          path: stepPath,
+          authInfo: {
+            userId: profile?.uid || 'unknown'
+          }
+        };
+        console.error('Firestore Error: ', JSON.stringify(errInfo));
+        setError('Error fetching data: ' + (error.message || error));
       } finally {
         setLoading(false);
       }
@@ -217,7 +256,11 @@ export function Reports() {
     try {
       const promises = [];
       for (const [key, value] of Object.entries(editedHours)) {
-        if (value === '') continue;
+        if (value === '') {
+          // If empty, delete the existing record to save storage
+          promises.push(deleteDoc(doc(db, 'production_hours', key)));
+          continue;
+        }
         const [date, lineId] = key.split('_');
         promises.push(setDoc(doc(db, 'production_hours', key), {
           date,
@@ -238,6 +281,53 @@ export function Reports() {
       setProductionHours(snapshotProdHours.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
       setError('Failed to save hours: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteIncident = async (id: string) => {
+    setItemToDelete({ ids: [id], type: 'incident' });
+  };
+
+  const handleBulkDeleteIncidents = () => {
+    if (selectedIncidents.length === 0) return;
+    setItemToDelete({ ids: selectedIncidents, type: 'incident' });
+  };
+
+  const handleDeleteWipEntry = async (id: string) => {
+    setItemToDelete({ ids: [id], type: 'wip' });
+  };
+
+  const handleBulkDeleteWipEntries = () => {
+    if (selectedWipEntries.length === 0) return;
+    setItemToDelete({ ids: selectedWipEntries, type: 'wip' });
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const promises = [];
+      if (itemToDelete.type === 'incident') {
+        itemToDelete.ids.forEach(id => {
+          promises.push(deleteDoc(doc(db, 'incidents', id)));
+        });
+        await Promise.all(promises);
+        setIncidents(prev => prev.filter(inc => !itemToDelete.ids.includes(inc.id)));
+        setSelectedIncidents([]);
+      } else if (itemToDelete.type === 'wip') {
+         itemToDelete.ids.forEach(id => {
+          promises.push(deleteDoc(doc(db, 'wip_entries', id)));
+        });
+        await Promise.all(promises);
+        setWipEntries(prev => prev.filter(entry => !itemToDelete.ids.includes(entry.id)));
+        setSelectedWipEntries([]);
+      }
+      setItemToDelete(null);
+    } catch (err: any) {
+      setError(`Failed to delete ${itemToDelete.type}(s): ` + err.message);
     } finally {
       setIsSaving(false);
     }
@@ -350,7 +440,7 @@ export function Reports() {
           createdAt = entry.createdAt?.toDate ? entry.createdAt.toDate() : new Date(entry.createdAt);
         }
         return {
-          'Entry ID': entry.id,
+          'Snapshot ID': entry.snapshotId || 'N/A',
           'Line Name': linesMap[entry.lineId] || entry.lineId,
           'Machine Name': machinesMap[entry.machineId] || entry.machineId,
           'WIP Quantity': entry.wip,
@@ -424,6 +514,7 @@ export function Reports() {
     setEditReportedBy(incident.reportedBy || '');
     setEditCause(incident.cause || '');
     setEditAction(incident.action || '');
+    setEditReasonCode(incident.reasonCode || '');
     setEditTotalJigs(incident.totalJigs || '');
     setEditBreakdownJigs(incident.breakdownJigs || '');
     setEditType(incident.type || '');
@@ -456,6 +547,7 @@ export function Reports() {
       if (editType !== (editingIncident.type || '')) updateData.type = editType;
       if (editCause !== (editingIncident.cause || '')) updateData.cause = editCause;
       if (editAction !== (editingIncident.action || '')) updateData.action = editAction;
+      if (editReasonCode !== (editingIncident.reasonCode || '')) updateData.reasonCode = editReasonCode;
       
       if (editTotalJigs !== '') {
         if (Number(editTotalJigs) !== editingIncident.totalJigs) updateData.totalJigs = Number(editTotalJigs);
@@ -652,10 +744,20 @@ export function Reports() {
 
       {activeTab === 'downtime' ? (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2 border-b pb-2">
-            <Calendar size={20} className="text-blue-600" />
-            Downtime Overview
-          </h3>
+          <div className="flex justify-between items-center mb-4 border-b pb-2">
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+              <Calendar size={20} className="text-blue-600" />
+              Downtime Overview
+            </h3>
+            {profile?.role === 'admin' && selectedIncidents.length > 0 && (
+              <button
+                onClick={handleBulkDeleteIncidents}
+                className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-sm font-medium transition-colors"
+              >
+                <Trash2 size={16} /> Delete Selected ({selectedIncidents.length})
+              </button>
+            )}
+          </div>
           
           {loading ? (
             <div className="text-center py-8 text-gray-500">Loading data...</div>
@@ -666,6 +768,19 @@ export function Reports() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
+                    {profile?.role === 'admin' && (
+                      <th className="p-4 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedIncidents.length > 0 && selectedIncidents.length === filteredIncidents.length}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedIncidents(filteredIncidents.map(i => i.id));
+                            else setSelectedIncidents([]);
+                          }}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </th>
+                    )}
                     <th className="p-4 font-medium">Machine</th>
                     <th className="p-4 font-medium">Line</th>
                     <th className="p-4 font-medium">Status</th>
@@ -687,15 +802,30 @@ export function Reports() {
                       start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
                     }
                     const isOutOfOrder = incident.type === 'out_of_order';
+                    const isSelected = selectedIncidents.includes(incident.id);
                     return (
                       <tr 
                         key={incident.id} 
                         className={`transition-colors ${
+                          isSelected ? 'bg-blue-50' :
                           isOutOfOrder 
                             ? 'bg-yellow-50 outline outline-[3px] outline-amber-500 hover:bg-yellow-100 relative z-10' 
                             : 'hover:bg-gray-50 border-b border-gray-100'
                         }`}
                       >
+                      {profile?.role === 'admin' && (
+                        <td className="p-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedIncidents(prev => [...prev, incident.id]);
+                              else setSelectedIncidents(prev => prev.filter(id => id !== incident.id));
+                            }}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                        </td>
+                      )}
                       <td className="p-4 font-medium text-gray-800">{incident.machineName}</td>
                       <td className="p-4 text-gray-600">{incident.lineName}</td>
                       <td className="p-4">
@@ -734,13 +864,22 @@ export function Reports() {
                       </td>
                       {profile?.role === 'admin' && (
                         <td className="p-4 text-right">
-                          <button
-                            onClick={() => handleEditClick(incident)}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="Edit Incident"
-                          >
-                            <Edit2 size={18} />
-                          </button>
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => handleEditClick(incident)}
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Edit Incident"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteIncident(incident.id)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete Incident"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -753,10 +892,20 @@ export function Reports() {
       </div>
       ) : activeTab === 'wip' ? (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2 border-b pb-2">
-            <Calendar size={20} className="text-blue-600" />
-            WIP Overview
-          </h3>
+          <div className="flex justify-between items-center mb-4 border-b pb-2">
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+              <Calendar size={20} className="text-blue-600" />
+              WIP Overview
+            </h3>
+            {profile?.role === 'admin' && selectedWipEntries.length > 0 && (
+              <button
+                onClick={handleBulkDeleteWipEntries}
+                className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-sm font-medium transition-colors"
+              >
+                <Trash2 size={16} /> Delete Selected ({selectedWipEntries.length})
+              </button>
+            )}
+          </div>
           
           {loading ? (
             <div className="text-center py-8 text-gray-500">Loading data...</div>
@@ -767,11 +916,26 @@ export function Reports() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
+                    {profile?.role === 'admin' && (
+                      <th className="p-4 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedWipEntries.length > 0 && selectedWipEntries.length === filteredWipEntries.length}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedWipEntries(filteredWipEntries.map(e => e.id));
+                            else setSelectedWipEntries([]);
+                          }}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </th>
+                    )}
                     <th className="p-4 font-medium">Date & Time</th>
+                    <th className="p-4 font-medium">Batch ID</th>
                     <th className="p-4 font-medium">Line</th>
                     <th className="p-4 font-medium">Machine</th>
                     <th className="p-4 font-medium">WIP Quantity</th>
                     <th className="p-4 font-medium">Created By</th>
+                    {profile?.role === 'admin' && <th className="p-4 font-medium text-right">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -780,15 +944,43 @@ export function Reports() {
                     if (entry.createdAt) {
                       createdAt = entry.createdAt?.toDate ? entry.createdAt.toDate() : new Date(entry.createdAt);
                     }
+                    const isSelected = selectedWipEntries.includes(entry.id);
                     return (
-                      <tr key={entry.id} className="hover:bg-gray-50 transition-colors">
+                      <tr key={entry.id} className={`hover:bg-gray-50 transition-colors ${isSelected ? 'bg-blue-50' : ''}`}>
+                        {profile?.role === 'admin' && (
+                          <td className="p-4 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                if (e.target.checked) setSelectedWipEntries(prev => [...prev, entry.id]);
+                                else setSelectedWipEntries(prev => prev.filter(id => id !== entry.id));
+                              }}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                          </td>
+                        )}
                         <td className="p-4 text-gray-600">
                           {createdAt ? format(createdAt, 'MMM d, yyyy HH:mm:ss') : 'N/A'}
+                        </td>
+                        <td className="p-4 text-xs font-mono text-gray-400">
+                          {entry.snapshotId ? entry.snapshotId.substring(0, 8) : '-'}
                         </td>
                         <td className="p-4 text-gray-600">{linesMap[entry.lineId] || entry.lineId}</td>
                         <td className="p-4 text-gray-600">{machinesMap[entry.machineId] || entry.machineId}</td>
                         <td className="p-4 font-medium text-blue-600">{entry.wip}</td>
                         <td className="p-4 text-gray-600">{formatName(getDisplayName(entry.createdBy))}</td>
+                        {profile?.role === 'admin' && (
+                          <td className="p-4 text-right">
+                            <button
+                              onClick={() => handleDeleteWipEntry(entry.id)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors inline-flex"
+                              title="Delete WIP Entry"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -1069,6 +1261,16 @@ export function Reports() {
                 </div>
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason Code</label>
+                <input
+                  type="text"
+                  value={editReasonCode}
+                  onChange={(e) => setEditReasonCode(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  list="reason-codes-list"
+                />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Cause</label>
                 <textarea
                   value={editCause}
@@ -1118,6 +1320,34 @@ export function Reports() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {itemToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Confirm Delete</h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to permanently delete {itemToDelete.ids.length > 1 ? `these ${itemToDelete.ids.length}` : 'this'} {itemToDelete.type === 'incident' ? 'downtime incident(s)' : 'WIP entry(s)'}? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setItemToDelete(null)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+                disabled={isSaving}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={isSaving}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+              >
+                {isSaving ? 'Deleting...' : 'Delete Permanently'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -116,9 +116,42 @@
         "updatedBy": { "type": "string" }
       },
       "required": ["date", "lineId", "hours"]
+    },
+    "WipSnapshot": {
+      "title": "WIP Snapshot",
+      "description": "A snapshot of WIP for a line at a specific time",
+      "type": "object",
+      "properties": {
+        "lineId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["lineId", "createdAt", "createdBy"]
+    },
+    "WipEntry": {
+      "title": "WIP Entry",
+      "description": "An individual machine's WIP within a snapshot",
+      "type": "object",
+      "properties": {
+        "snapshotId": { "type": "string" },
+        "lineId": { "type": "string" },
+        "machineId": { "type": "string" },
+        "wip": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["snapshotId", "lineId", "machineId", "wip", "createdAt", "createdBy"]
     }
   },
   "firestore": {
+    "/wip_snapshots/{snapshotId}": {
+      "schema": { "$ref": "#/entities/WipSnapshot" },
+      "description": "WIP snapshots per line"
+    },
+    "/wip_entries/{entryId}": {
+      "schema": { "$ref": "#/entities/WipEntry" },
+      "description": "Individual WIP entries linked to snapshots"
+    },
     "/production_hours/{docId}": {
       "schema": { "$ref": "#/entities/ProductionHours" },
       "description": "Production hours per line per date"

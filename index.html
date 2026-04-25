@@ -4,6 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Google AI Studio App</title>
+    <script>
+      /**
+       * Safeguard against TypeError: Cannot set property fetch of #<Window> which has only a getter
+       * This can happen if some polyfills try to overwrite window.fetch
+       */
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          if (originalFetch && !Object.getOwnPropertyDescriptor(window, 'fetch').set) {
+            Object.defineProperty(window, 'fetch', {
+              get: function() { return originalFetch; },
+              set: function(v) { 
+                if (v !== originalFetch) {
+                  console.warn('Something tried to overwrite window.fetch - assignment ignored.');
+                }
+              },
+              configurable: true
+            });
+          }
+        } catch (e) {
+          // Already read-only or not configurable, which is fine
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

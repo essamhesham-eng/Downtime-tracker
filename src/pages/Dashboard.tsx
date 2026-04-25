@@ -121,6 +121,7 @@ export function Dashboard() {
         <div className="flex flex-col gap-6">
           {lines.map(line => {
             const lineMachines = machines.filter(m => m.lineId === line.id);
+            const totalWIP = lineMachines.reduce((sum, machine) => sum + (Number(machine.wip) || 0), 0);
             
             return (
               <div key={line.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
@@ -129,6 +130,9 @@ export function Dashboard() {
                     <h3 className="text-lg font-semibold text-gray-800">{line.name}</h3>
                     <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-full border border-blue-100">
                       Shift: {productionHours[line.id] ?? 9}hrs
+                    </span>
+                    <span className="text-xs font-medium text-purple-600 bg-purple-50 px-2 py-1 rounded-full border border-purple-100">
+                      Total WIP: {totalWIP}
                     </span>
                   </div>
                   {line.wipUpdatedAt && (

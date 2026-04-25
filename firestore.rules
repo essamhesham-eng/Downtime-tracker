@@ -62,9 +62,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'admin') ||
-        request.auth.token.email == "essam.bn@yahoo.com" ||
-        request.auth.token.email == "cron@sharestate.com"
+        ('email' in request.auth.token && request.auth.token.email == "essam.bn@yahoo.com") ||
+        ('email' in request.auth.token && request.auth.token.email == "cron@sharestate.com") ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'admin')
       );
     }
 
@@ -136,8 +136,16 @@ service cloud.firestore {
              (!('wipUpdatedAt' in data) || data.wipUpdatedAt is timestamp);
     }
 
+    function isValidWipSnapshot(data) {
+      return hasOnlyAllowedFields(['lineId', 'createdAt', 'createdBy']) &&
+             data.lineId is string && data.lineId.size() > 0 &&
+             data.createdAt is timestamp &&
+             data.createdBy is string;
+    }
+
     function isValidWipEntry(data) {
-      return hasOnlyAllowedFields(['lineId', 'machineId', 'wip', 'createdAt', 'createdBy']) &&
+      return hasOnlyAllowedFields(['snapshotId', 'lineId', 'machineId', 'wip', 'createdAt', 'createdBy']) &&
+             data.snapshotId is string && data.snapshotId.size() > 0 &&
              data.lineId is string && data.lineId.size() > 0 &&
              data.machineId is string && data.machineId.size() > 0 &&
              data.wip is number &&
@@ -248,6 +256,13 @@ service cloud.firestore {
         (isAdmin() && areImmutableFieldsUnchanged(['createdAt'])) ||
         (!isAdmin() && areImmutableFieldsUnchanged(['createdAt', 'name', 'allowOutOfOrder']))
       );
+      allow delete: if isAdmin();
+    }
+
+    match /wip_snapshots/{snapshotId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidWipSnapshot(request.resource.data);
+      allow update: if false; // append-only
       allow delete: if isAdmin();
     }
 

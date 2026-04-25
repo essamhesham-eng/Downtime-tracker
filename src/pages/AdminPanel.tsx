@@ -6,7 +6,6 @@ import { Settings, Plus, Trash2, UserCog, GripVertical, Mail, Clock, Save, UserP
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { MultiSelect } from '../components/MultiSelect';
 import { ProductionHoursModal } from '../components/ProductionHoursModal';
-import emailjs from 'emailjs-com';
 
 export function AdminPanel() {
   const { profile } = useAuth();
@@ -490,7 +489,7 @@ export function AdminPanel() {
       }
 
       // Use direct REST API call to avoid secondary app issues and get better error messages
-      const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseConfig.apiKey}`, {
+      const response = await window.fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseConfig.apiKey}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, writeBatch, getDocs, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Wrench, Save, Clock, Plus, Trash2 } from 'lucide-react';
@@ -26,6 +26,13 @@ interface WipRow {
   wip: string;
 }
 
+interface WipSnapshot {
+  id: string;
+  lineId: string;
+  createdAt: any;
+  createdBy: string;
+}
+
 export function WIP() {
   const { profile } = useAuth();
   const [lines, setLines] = useState<Line[]>([]);
@@ -33,6 +40,9 @@ export function WIP() {
   const [lineRows, setLineRows] = useState<Record<string, WipRow[]>>({});
   const [isSaving, setIsSaving] = useState<Record<string, boolean>>({});
   const [saveSuccess, setSaveSuccess] = useState<Record<string, boolean>>({});
+  const [snapshots, setSnapshots] = useState<Record<string, WipSnapshot[]>>({});
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState<Record<string, string>>({});
+  const [isLoadingHistory, setIsLoadingHistory] = useState<Record<string, boolean>>({});
   
   const dirtyLinesRef = useRef<Set<string>>(new Set());
 
@@ -54,7 +64,8 @@ export function WIP() {
         const lineIds = new Set(machinesData.map(m => m.lineId));
         
         lineIds.forEach(lineId => {
-          if (!dirtyLinesRef.current.has(lineId)) {
+          // Only update from machines if not currently dirty and no history snapshot is selected
+          if (!dirtyLinesRef.current.has(lineId) && !selectedSnapshotId[lineId]) {
             // Get all machines for this line
             const lineMachines = machinesData.filter(m => m.lineId === lineId).sort((a, b) => (a.order || 0) - (b.order || 0));
             
@@ -87,11 +98,70 @@ export function WIP() {
       });
     });
 
+    // Fetch WIP Snapshots
+    const qSnapshots = query(collection(db, 'wip_snapshots'), orderBy('createdAt', 'desc'));
+    const unsubSnapshots = onSnapshot(qSnapshots, (snapshot) => {
+      const allSnapshots = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WipSnapshot));
+      const grouped = allSnapshots.reduce((acc, s) => {
+        if (!acc[s.lineId]) acc[s.lineId] = [];
+        acc[s.lineId].push(s);
+        return acc;
+      }, {} as Record<string, WipSnapshot[]>);
+      setSnapshots(grouped);
+    });
+
     return () => {
       unsubLines();
       unsubMachines();
+      unsubSnapshots();
     };
-  }, []);
+  }, [selectedSnapshotId]);
+
+  const handleSnapshotChange = async (lineId: string, snapshotId: string) => {
+    setSelectedSnapshotId(prev => ({ ...prev, [lineId]: snapshotId }));
+    
+    if (!snapshotId) {
+      // If cleared, revert to current machine data
+      dirtyLinesRef.current.delete(lineId);
+      const lineMachines = machines.filter(m => m.lineId === lineId).sort((a, b) => (a.order || 0) - (b.order || 0));
+      const machinesWithWip = lineMachines.filter(m => m.wip !== undefined && m.wip !== null && m.wip !== '');
+      let rowsForLine = machinesWithWip.map(m => ({
+        id: Math.random().toString(36).substring(2, 9),
+        machineId: m.id,
+        wip: String(m.wip)
+      }));
+      if (rowsForLine.length === 0) {
+        rowsForLine = [{ id: Math.random().toString(36).substring(2, 9), machineId: '', wip: '' }];
+      }
+      setLineRows(prev => ({ ...prev, [lineId]: rowsForLine }));
+      return;
+    }
+
+    setIsLoadingHistory(prev => ({ ...prev, [lineId]: true }));
+    try {
+      // Query wip_entries for this snapshot
+      const snapshotQuery = query(collection(db, 'wip_entries'), where('snapshotId', '==', snapshotId));
+      const result = await getDocs(snapshotQuery);
+      
+      const entries = result.docs.map(doc => doc.data());
+      const rows = entries.map(entry => ({
+        id: Math.random().toString(36).substring(2, 9),
+        machineId: entry.machineId,
+        wip: String(entry.wip)
+      }));
+      
+      if (rows.length === 0) {
+        rows.push({ id: Math.random().toString(36).substring(2, 9), machineId: '', wip: '' });
+      }
+      
+      setLineRows(prev => ({ ...prev, [lineId]: rows }));
+      dirtyLinesRef.current.add(lineId);
+    } catch (error) {
+      console.error('Error loading history:', error);
+    } finally {
+      setIsLoadingHistory(prev => ({ ...prev, [lineId]: false }));
+    }
+  };
 
   const handleRowChange = React.useCallback((lineId: string, rowId: string, field: keyof WipRow, value: string) => {
     dirtyLinesRef.current.add(lineId);
@@ -140,35 +210,49 @@ export function WIP() {
       });
       
       const batch = writeBatch(db);
+      const timestamp = serverTimestamp();
       
-      // Update all machines in the line
+      // Create a snapshot record
+      const snapshotRef = doc(collection(db, 'wip_snapshots'));
+      const snapshotId = snapshotRef.id;
+      batch.set(snapshotRef, {
+        lineId,
+        createdAt: timestamp,
+        createdBy: profile?.email || 'unknown'
+      });
+      
+      // Update all machines in the line and save entries
       lineMachines.forEach(m => {
         const newWip = wipMap[m.id];
+        
+        // Always save to wip_entries for the snapshot if there's a value
+        if (newWip !== null) {
+          const newEntryRef = doc(collection(db, 'wip_entries'));
+          batch.set(newEntryRef, {
+            snapshotId,
+            lineId,
+            machineId: m.id,
+            wip: newWip,
+            createdAt: timestamp,
+            createdBy: profile?.email || 'unknown'
+          });
+        }
+
+        // Update current machine state if it changed
         if (m.wip !== newWip) {
           batch.update(doc(db, 'machines', m.id), { wip: newWip });
-          
-          // Add a new entry to wip_entries history
-          if (newWip !== null) {
-            const newEntryRef = doc(collection(db, 'wip_entries'));
-            batch.set(newEntryRef, {
-              lineId,
-              machineId: m.id,
-              wip: newWip,
-              createdAt: serverTimestamp(),
-              createdBy: profile?.email || 'unknown'
-            });
-          }
         }
       });
       
       // Update line's wipUpdatedAt
       batch.update(doc(db, 'lines', lineId), {
-        wipUpdatedAt: serverTimestamp()
+        wipUpdatedAt: timestamp
       });
       
       await batch.commit();
       
       dirtyLinesRef.current.delete(lineId);
+      setSelectedSnapshotId(prev => ({ ...prev, [lineId]: '' }));
       
       setSaveSuccess(prev => ({ ...prev, [lineId]: true }));
       setTimeout(() => {
@@ -204,8 +288,26 @@ export function WIP() {
 
           return (
             <div key={line.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <h3 className="text-lg font-bold text-gray-800">{line.name}</h3>
+              <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                  <h3 className="text-lg font-bold text-gray-800">{line.name}</h3>
+                  <div className="flex items-center gap-2">
+                    <Clock size={16} className="text-gray-400" />
+                    <select
+                      value={selectedSnapshotId[line.id] || ''}
+                      onChange={(e) => handleSnapshotChange(line.id, e.target.value)}
+                      className="text-sm border border-gray-300 rounded-lg p-1.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white min-w-[200px]"
+                    >
+                      <option value="">Current Live View</option>
+                      {snapshots[line.id]?.map(s => (
+                        <option key={s.id} value={s.id}>
+                          {s.createdAt?.toDate ? format(s.createdAt.toDate(), 'MMM d, yyyy HH:mm') : 'Recently added'}
+                        </option>
+                      ))}
+                    </select>
+                    {isLoadingHistory[line.id] && <span className="text-xs text-blue-500 animate-pulse">Loading...</span>}
+                  </div>
+                </div>
                 {line.wipUpdatedAt && (
                   <div className="text-sm text-gray-500 flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-full border border-gray-200 shadow-sm">
                     <Clock size={14} className="text-blue-500" />
