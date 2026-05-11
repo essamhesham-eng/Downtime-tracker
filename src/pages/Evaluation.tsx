@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, orderBy, onSnapshot, getDocs, addDoc, serverTimestamp, setDoc, doc, getDoc, limit, deleteDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, getDocs, addDoc, serverTimestamp, setDoc, doc, getDoc, limit, deleteDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Search, Save, User, Star, History, AlertTriangle, Minus, Plus, Trash2 } from 'lucide-react';
@@ -24,6 +24,7 @@ export function Evaluation() {
   const isPdEngineer = profile?.role === 'pd_engineer';
   const isLineLeader = profile?.role === 'line_leader';
   const canEvaluate = isPdEngineer || isLineLeader || profile?.role === 'admin' || profile?.role === 'manager';
+  const canEditName = isPdEngineer || profile?.role === 'admin';
   
   const existingOperator = operators.find(o => o.code === searchCode.trim());
 
@@ -136,8 +137,16 @@ export function Evaluation() {
           createdAt: serverTimestamp(),
           createdBy: profile?.uid
         });
-      } else if (opDoc.data().name !== name) {
+      } else if (opDoc.data().name !== name && canEditName) {
         await setDoc(opRef, { name }, { merge: true });
+        
+        // Reflect name change in all evaluations for this operator
+        const evalsQuery = query(collection(db, 'evaluations'), where('operatorCode', '==', code));
+        const evalsSnapshot = await getDocs(evalsQuery);
+        const updatePromises = evalsSnapshot.docs.map(evDoc => 
+          setDoc(doc(db, 'evaluations', evDoc.id), { operatorName: name }, { merge: true })
+        );
+        await Promise.all(updatePromises);
       }
       
       await addDoc(collection(db, 'evaluations'), {
@@ -288,8 +297,8 @@ export function Evaluation() {
                   value={operatorName}
                   onChange={(e) => setOperatorName(e.target.value)}
                   placeholder="Operator Name"
-                  readOnly={!!existingOperator}
-                  className={`w-full p-3 border rounded-xl outline-none transition-all shadow-sm ${existingOperator ? 'bg-gray-50 border-gray-200 text-gray-600 cursor-not-allowed' : 'border-gray-200 focus:ring-2 focus:ring-blue-500'}`}
+                  readOnly={existingOperator && !canEditName}
+                  className={`w-full p-3 border rounded-xl outline-none transition-all shadow-sm ${existingOperator && !canEditName ? 'bg-gray-50 border-gray-200 text-gray-600 cursor-not-allowed' : 'border-gray-200 focus:ring-2 focus:ring-blue-500'}`}
                   required
                 />
               </div>
@@ -453,8 +462,9 @@ export function Evaluation() {
                   </div>
                   {(isPdEngineer || profile?.role === 'admin') && (
                     <button
+                      type="button"
                       onClick={() => handleDeleteEvaluation(ev.id)}
-                      className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                      className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                       title="Delete Evaluation"
                     >
                       <Trash2 size={16} />

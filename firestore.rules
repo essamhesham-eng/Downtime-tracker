@@ -358,7 +358,7 @@ service cloud.firestore {
     match /evaluations/{evaluationId} {
       allow read: if isAuthenticated();
       allow create: if canEvaluateOperator() && isValidEvaluation(request.resource.data);
-      allow update: if false; // append-only
+      allow update: if (isAdmin() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'pd_engineer')) && areImmutableFieldsUnchanged(['operatorCode', 'evaluatorId', 'pointsChange', 'comment', 'createdAt', 'evaluatorName']); // only allow updating operatorName
       allow delete: if isAdmin() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'pd_engineer');
     }
   }
