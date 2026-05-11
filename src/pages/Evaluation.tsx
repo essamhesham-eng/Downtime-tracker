@@ -66,13 +66,17 @@ export function Evaluation() {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const periodEvals = data.filter((e: any) => {
         const d = e.createdAt?.toDate ? e.createdAt.toDate() : (e.createdAt ? new Date(e.createdAt) : new Date());
-        return d >= currentPeriod.start && d <= currentPeriod.end;
+        const inPeriod = d >= currentPeriod.start && d <= currentPeriod.end;
+        if (isLineLeader && e.evaluatorId !== profile?.uid) {
+          return false;
+        }
+        return inPeriod;
       });
       setEvaluations(periodEvals);
     });
 
     return () => unsubEvals();
-  }, [canEvaluate, currentPeriod]);
+  }, [canEvaluate, currentPeriod, isLineLeader, profile?.uid]);
 
   const handleCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
