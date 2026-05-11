@@ -18,6 +18,7 @@ export function AdminPanel() {
 
   const [newLineName, setNewLineName] = useState('');
   const [newLineAllowOutOfOrder, setNewLineAllowOutOfOrder] = useState(false);
+  const [newLineColor, setNewLineColor] = useState('blue');
   const [newMachineName, setNewMachineName] = useState('');
   const [newMachineGroups, setNewMachineGroups] = useState<string[]>([]);
   const [newMachineIsCritical, setNewMachineIsCritical] = useState(false);
@@ -30,33 +31,24 @@ export function AdminPanel() {
   const [itemToDelete, setItemToDelete] = useState<{type: 'line' | 'machine' | 'group' | 'reasonCode', id: string, name: string} | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
-  const [reportEmails, setReportEmails] = useState('');
-  const [reportMessage, setReportMessage] = useState('Here is your automated downtime report.');
-  const [reportFrequencies, setReportFrequencies] = useState<string[]>(['daily']);
-  const [reportAnalysis, setReportAnalysis] = useState<string[]>(['kpis', 'pareto', 'top_issues']);
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
-  const [settingsSuccess, setSettingsSuccess] = useState(false);
-  const [isTestingReport, setIsTestingReport] = useState(false);
-  const [testReportResult, setTestReportResult] = useState<string | null>(null);
-
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [editingLineName, setEditingLineName] = useState('');
+  const [editingLineColor, setEditingLineColor] = useState('blue');
+  const [editingLineAllowOutOfOrder, setEditingLineAllowOutOfOrder] = useState(false);
+  
+  const lineColors = [
+    { value: 'blue', label: 'Blue' },
+    { value: 'emerald', label: 'Green' },
+    { value: 'purple', label: 'Purple' },
+    { value: 'amber', label: 'Amber' },
+    { value: 'pink', label: 'Pink' },
+    { value: 'indigo', label: 'Indigo' },
+    { value: 'rose', label: 'Rose' },
+    { value: 'cyan', label: 'Cyan' },
+  ];
   
   const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
   const [editingMachineName, setEditingMachineName] = useState('');
-
-  const availableFrequencies = [
-    { id: 'daily', label: 'Daily' },
-    { id: 'weekly', label: 'Weekly' },
-    { id: 'monthly', label: 'Monthly' }
-  ];
-
-  const availableAnalysis = [
-    { id: 'kpis', label: 'KPIs (Total Downtime, MTTR, MTBF)' },
-    { id: 'pareto', label: 'Pareto Analysis (Top Reasons)' },
-    { id: 'top_issues', label: 'Top 10 Longest Issues' },
-    { id: 'oee', label: 'OEE Impact Summary' }
-  ];
 
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -76,6 +68,7 @@ export function AdminPanel() {
     { id: 'report', label: 'Report Breakdown' },
     { id: 'incidents', label: 'Active Incidents' },
     { id: 'wip', label: 'WIP' },
+    { id: 'evaluation', label: 'Evaluation' },
     { id: 'analysis', label: 'Analysis' },
     { id: 'reports', label: 'Export Data' },
     { id: 'admin', label: 'Admin Panel' },
@@ -89,15 +82,6 @@ export function AdminPanel() {
 
     const fetchSettings = async () => {
       try {
-        const docSnap = await getDoc(doc(db, 'settings', 'report'));
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data.emails) setReportEmails(data.emails.join(', '));
-          if (data.message) setReportMessage(data.message);
-          if (data.frequencies) setReportFrequencies(data.frequencies);
-          if (data.analysis) setReportAnalysis(data.analysis);
-        }
-        
         const generalSnap = await getDoc(doc(db, 'settings', 'general'));
         if (generalSnap.exists()) {
           const data = generalSnap.data();
@@ -183,10 +167,12 @@ export function AdminPanel() {
       await addDoc(collection(db, 'lines'), {
         name: newLineName,
         allowOutOfOrder: newLineAllowOutOfOrder,
+        colorCode: newLineColor,
         createdAt: serverTimestamp(),
       });
       setNewLineName('');
       setNewLineAllowOutOfOrder(false);
+      setNewLineColor('blue');
     } catch (error) {
       console.error('Error adding line:', error);
       setErrorMsg('Failed to add line.');
@@ -274,16 +260,17 @@ export function AdminPanel() {
     }
   };
 
-  const handleUpdateLineName = async (id: string) => {
+  const handleUpdateLine = async (id: string) => {
     if (!editingLineName.trim()) return;
     try {
       await updateDoc(doc(db, 'lines', id), {
-        name: editingLineName.trim()
+        name: editingLineName.trim(),
+        colorCode: editingLineColor
       });
       setEditingLineId(null);
     } catch (err) {
-      console.error('Error updating line name:', err);
-      setErrorMsg('Failed to update line name');
+      console.error('Error updating line:', err);
+      setErrorMsg('Failed to update line');
     }
   };
 
@@ -368,82 +355,6 @@ export function AdminPanel() {
       console.error('Error updating line order:', error);
       setErrorMsg('Failed to update line order.');
     }
-  };
-
-  const handleSaveSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSavingSettings(true);
-    setSettingsSuccess(false);
-    try {
-      const emailsList = reportEmails.split(',').map(e => e.trim()).filter(e => e);
-      await setDoc(doc(db, 'settings', 'report'), {
-        emails: emailsList,
-        message: reportMessage,
-        frequencies: reportFrequencies,
-        analysis: reportAnalysis,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      
-      setSettingsSuccess(true);
-      setTimeout(() => setSettingsSuccess(false), 3000);
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      setErrorMsg('Failed to save settings.');
-    } finally {
-      setIsSavingSettings(false);
-    }
-  };
-
-  const handleTestReport = async () => {
-    setIsTestingReport(true);
-    setTestReportResult(null);
-    try {
-      let testOutput = `--- TEST REPORT ---\n\n`;
-      testOutput += `To: ${reportEmails}\n`;
-      testOutput += `Frequencies: ${reportFrequencies.join(', ')}\n\n`;
-      testOutput += `Message:\n${reportMessage}\n\n`;
-      testOutput += `Included Analysis:\n`;
-      reportAnalysis.forEach(a => {
-        const label = availableAnalysis.find(x => x.id === a)?.label;
-        testOutput += `- ${label}\n`;
-      });
-
-      // Send email using EmailJS
-      // Note: In a real production app, you'd want to use a backend service for this
-      // to keep your EmailJS credentials secure. For this demo, we'll use a generic service.
-      const templateParams = {
-        to_email: reportEmails,
-        message: testOutput,
-        subject: 'Incident Management System - Test Report'
-      };
-
-      // We'll use a placeholder service ID, template ID, and user ID for demonstration.
-      // The user will need to replace these with their actual EmailJS credentials.
-      // await emailjs.send('YOUR_SERVICE_ID', 'YOUR_TEMPLATE_ID', templateParams, 'YOUR_USER_ID');
-      
-      // Since we don't have real credentials, we'll simulate the success
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      testOutput += `\n\n✅ Email successfully sent to: ${reportEmails}`;
-      
-      setTestReportResult(testOutput);
-    } catch (error) {
-      console.error('Error testing report:', error);
-      setErrorMsg('Failed to send test report email. Please check your EmailJS configuration.');
-    } finally {
-      setIsTestingReport(false);
-    }
-  };
-
-  const toggleFrequency = (id: string) => {
-    setReportFrequencies(prev => 
-      prev.includes(id) ? prev.filter(f => f !== id) : [...prev, id]
-    );
-  };
-
-  const toggleAnalysis = (id: string) => {
-    setReportAnalysis(prev => 
-      prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]
-    );
   };
 
   const handleInviteUser = async (e: React.FormEvent) => {
@@ -665,6 +576,15 @@ export function AdminPanel() {
                 className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 required
               />
+              <select
+                value={newLineColor}
+                onChange={(e) => setNewLineColor(e.target.value)}
+                className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-w-[120px]"
+              >
+                {lineColors.map(c => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
               <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2">
                 <Plus size={18} /> Add
               </button>
@@ -709,11 +629,20 @@ export function AdminPanel() {
                                   className="flex-1 p-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                   autoFocus
                                   onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleUpdateLineName(line.id);
+                                    if (e.key === 'Enter') handleUpdateLine(line.id);
                                     if (e.key === 'Escape') setEditingLineId(null);
                                   }}
                                 />
-                                <button onClick={() => handleUpdateLineName(line.id)} className="text-green-600 hover:text-green-700 p-1">
+                                <select
+                                  value={editingLineColor}
+                                  onChange={(e) => setEditingLineColor(e.target.value)}
+                                  className="p-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500"
+                                >
+                                  {lineColors.map(c => (
+                                    <option key={c.value} value={c.value}>{c.label}</option>
+                                  ))}
+                                </select>
+                                <button onClick={() => handleUpdateLine(line.id)} className="text-green-600 hover:text-green-700 p-1">
                                   <Check size={16} />
                                 </button>
                                 <button onClick={() => setEditingLineId(null)} className="text-gray-500 hover:text-gray-700 p-1">
@@ -722,11 +651,15 @@ export function AdminPanel() {
                               </div>
                             ) : (
                               <div className="flex items-center gap-2">
-                                <span className="font-medium text-gray-800">{line.name}</span>
+                                <span className="font-medium text-gray-800 flex items-center gap-2">
+                                  <div className={`w-3 h-3 rounded-full bg-${line.colorCode || 'blue'}-500`}></div>
+                                  {line.name}
+                                </span>
                                 <button 
                                   onClick={() => {
                                     setEditingLineId(line.id);
                                     setEditingLineName(line.name);
+                                    setEditingLineColor(line.colorCode || 'blue');
                                   }} 
                                   className="text-gray-400 hover:text-blue-600 p-1"
                                 >
@@ -1072,112 +1005,6 @@ export function AdminPanel() {
           </div>
         </div>
 
-      </div>
-
-      {/* Report Settings */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
-          <Mail size={20} className="text-blue-600" />
-          Report Settings
-        </h3>
-        <p className="text-sm text-gray-600 mb-4">
-          Configure the automated report message, frequency, and included analysis.
-        </p>
-        <form onSubmit={handleSaveSettings} className="space-y-6 max-w-3xl">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-              <Mail size={16} /> Recipient Emails
-            </label>
-            <input
-              type="text"
-              value={reportEmails}
-              onChange={(e) => setReportEmails(e.target.value)}
-              placeholder="admin@example.com, manager@example.com"
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              required
-            />
-            <p className="text-xs text-gray-500 mt-1">Separate multiple emails with commas.</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Message Structure
-            </label>
-            <textarea
-              value={reportMessage}
-              onChange={(e) => setReportMessage(e.target.value)}
-              rows={4}
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Enter the message body for the report..."
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Send Frequency
-              </label>
-              <div className="space-y-2">
-                {availableFrequencies.map(freq => (
-                  <label key={freq.id} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={reportFrequencies.includes(freq.id)}
-                      onChange={() => toggleFrequency(freq.id)}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-gray-700">{freq.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Included Analysis
-              </label>
-              <div className="space-y-2">
-                {availableAnalysis.map(analysis => (
-                  <label key={analysis.id} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={reportAnalysis.includes(analysis.id)}
-                      onChange={() => toggleAnalysis(analysis.id)}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-gray-700">{analysis.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4 pt-4 border-t border-gray-100">
-            <button
-              type="submit"
-              disabled={isSavingSettings}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
-            >
-              <Save size={18} />
-              {isSavingSettings ? 'Saving...' : 'Save Settings'}
-            </button>
-            <button
-              type="button"
-              onClick={handleTestReport}
-              disabled={isTestingReport}
-              className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
-            >
-              {isTestingReport ? 'Testing...' : 'Test System'}
-            </button>
-            {settingsSuccess && <span className="text-green-600 font-medium text-sm">Settings saved successfully!</span>}
-          </div>
-          
-          {testReportResult && (
-            <div className="mt-4 p-4 bg-gray-900 text-green-400 font-mono text-sm rounded-lg whitespace-pre-wrap">
-              {testReportResult}
-            </div>
-          )}
-        </form>
       </div>
 
       {/* Role Permissions */}

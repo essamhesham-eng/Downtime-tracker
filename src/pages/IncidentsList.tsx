@@ -58,9 +58,11 @@ export function IncidentsList() {
   };
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(getServerTime()), 60000);
+    const timer = setInterval(() => setNow(getServerTime()), 30000); // Update every 30 seconds
     return () => clearInterval(timer);
   }, []);
+
+  const [lines, setLines] = useState<any[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -81,6 +83,11 @@ export function IncidentsList() {
       setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
+    const qLines = query(collection(db, 'lines'));
+    const unsubLines = onSnapshot(qLines, (snapshot) => {
+      setLines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     const qReasonCodes = query(collection(db, 'reasonCodes'), orderBy('code', 'asc'));
     const unsubReasonCodes = onSnapshot(qReasonCodes, (snapshot) => {
       setReasonCodes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -90,6 +97,7 @@ export function IncidentsList() {
       unsub();
       unsubUsers();
       unsubGroups();
+      unsubLines();
       unsubReasonCodes();
     };
   }, [user]);
@@ -112,7 +120,7 @@ export function IncidentsList() {
     if (!user) return;
     try {
       const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-      const duration = Math.ceil((getServerTime().getTime() - start.getTime()) / 60000);
+      const duration = Math.floor((getServerTime().getTime() - start.getTime()) / 60000);
 
       if (incident.type === 'out_of_order') {
         // For out of order, we prompt for a comment first
@@ -209,7 +217,7 @@ export function IncidentsList() {
         // Only set endTime and duration if they don't already exist (e.g., if line leader already marked it fixed)
         if (!reviewingIncident.endTime) {
           const start = reviewingIncident.startTime?.toDate ? reviewingIncident.startTime.toDate() : new Date(reviewingIncident.startTime);
-          const duration = Math.ceil((getServerTime().getTime() - start.getTime()) / 60000);
+          const duration = Math.floor((getServerTime().getTime() - start.getTime()) / 60000);
           
           updates.resolvedBy = user.uid;
           updates.resolvedByName = user.displayName || user.email || 'Unknown';
@@ -319,6 +327,10 @@ export function IncidentsList() {
     if (profile?.role !== 'admin' && profile?.role !== 'manager' && profile?.role !== 'pd_engineer' && user) {
       const userGroups = groups.filter(g => g.userIds?.includes(user.uid));
       filtered = filtered.filter(incident => {
+        if (profile?.role === 'line_leader') {
+          return incident.reportedBy === user.uid;
+        }
+
         // Always show incidents reported by the user
         if (incident.reportedBy === user.uid) return true;
 
@@ -371,6 +383,10 @@ export function IncidentsList() {
     if (profile?.role !== 'admin' && profile?.role !== 'manager' && profile?.role !== 'pd_engineer' && user) {
       const userGroups = groups.filter(g => g.userIds?.includes(user.uid));
       filtered = filtered.filter(incident => {
+        if (profile?.role === 'line_leader') {
+          return incident.reportedBy === user.uid;
+        }
+
         // Always show incidents reported by the user
         if (incident.reportedBy === user.uid) return true;
 
@@ -491,17 +507,33 @@ export function IncidentsList() {
           </div>
         ) : (
           <div className="space-y-4">
-            {Object.entries(groupedActiveIncidents).map(([lineName, lineIncidents]: [string, any[]]) => {
+            {Object.entries(groupedActiveIncidents).map(([lineName, lineIncidents]: [string, any[]], index) => {
               const isExpanded = expandedLines.has(lineName);
+              const lineObj = lines.find(l => l.name === lineName);
+              const colorCode = lineObj && lineObj.colorCode ? lineObj.colorCode : 'blue';
+
+              const colorClasses: Record<string, { border: string, bg: string, badgeBg: string, badgeText: string }> = {
+                blue: { border: 'border-l-blue-500', bg: 'bg-blue-50 hover:bg-blue-100', badgeBg: 'bg-blue-200', badgeText: 'text-blue-900' },
+                emerald: { border: 'border-l-emerald-500', bg: 'bg-emerald-50 hover:bg-emerald-100', badgeBg: 'bg-emerald-200', badgeText: 'text-emerald-900' },
+                purple: { border: 'border-l-purple-500', bg: 'bg-purple-50 hover:bg-purple-100', badgeBg: 'bg-purple-200', badgeText: 'text-purple-900' },
+                amber: { border: 'border-l-amber-500', bg: 'bg-amber-50 hover:bg-amber-100', badgeBg: 'bg-amber-200', badgeText: 'text-amber-900' },
+                pink: { border: 'border-l-pink-500', bg: 'bg-pink-50 hover:bg-pink-100', badgeBg: 'bg-pink-200', badgeText: 'text-pink-900' },
+                indigo: { border: 'border-l-indigo-500', bg: 'bg-indigo-50 hover:bg-indigo-100', badgeBg: 'bg-indigo-200', badgeText: 'text-indigo-900' },
+                rose: { border: 'border-l-rose-500', bg: 'bg-rose-50 hover:bg-rose-100', badgeBg: 'bg-rose-200', badgeText: 'text-rose-900' },
+                cyan: { border: 'border-l-cyan-500', bg: 'bg-cyan-50 hover:bg-cyan-100', badgeBg: 'bg-cyan-200', badgeText: 'text-cyan-900' },
+              };
+              
+              const styles = colorClasses[colorCode] || colorClasses.blue;
+
               return (
-                <div key={lineName} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                <div key={lineName} className={`bg-white rounded-xl shadow-sm border border-gray-100 border-l-4 ${styles.border} overflow-hidden`}>
                   <button
                     onClick={() => toggleLine(lineName)}
-                    className="w-full px-6 py-4 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors"
+                    className={`w-full px-6 py-4 flex items-center justify-between transition-colors ${styles.bg}`}
                   >
                     <div className="flex items-center gap-3">
                       <h3 className="text-lg font-bold text-gray-800">{lineName}</h3>
-                      <span className="px-2.5 py-0.5 bg-red-100 text-red-800 text-xs font-bold rounded-full">
+                      <span className={`px-2.5 py-0.5 text-xs font-bold rounded-full ${styles.badgeBg} ${styles.badgeText}`}>
                         {lineIncidents.length} Incident{lineIncidents.length !== 1 ? 's' : ''}
                       </span>
                     </div>
@@ -515,7 +547,7 @@ export function IncidentsList() {
                         const isPendingReview = incident.status === 'pending_me_review';
                         const duration = isPendingReview && incident.durationMinutes 
                           ? incident.durationMinutes 
-                          : Math.ceil((now.getTime() - start.getTime()) / 60000);
+                          : Math.floor((now.getTime() - start.getTime()) / 60000);
                         const isWorkingOn = incident.status === 'working_on';
 
                         // Check if current user is assigned via individual assignment or group membership

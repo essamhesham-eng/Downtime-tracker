@@ -20,10 +20,10 @@ export interface RolePermissions {
 }
 
 export const DEFAULT_PERMISSIONS: RolePermissions = {
-  admin: ['dashboard', 'report', 'incidents', 'analysis', 'reports', 'admin', 'profile', 'wip'],
-  manager: ['dashboard', 'incidents', 'analysis', 'reports', 'profile', 'wip'],
-  pd_engineer: ['dashboard', 'report', 'incidents', 'analysis', 'reports', 'profile', 'wip'],
-  line_leader: ['dashboard', 'report', 'incidents', 'profile', 'wip'],
+  admin: ['dashboard', 'report', 'incidents', 'analysis', 'reports', 'admin', 'profile', 'wip', 'evaluation'],
+  manager: ['dashboard', 'incidents', 'analysis', 'reports', 'profile', 'wip', 'evaluation'],
+  pd_engineer: ['dashboard', 'report', 'incidents', 'analysis', 'reports', 'profile', 'wip', 'evaluation'],
+  line_leader: ['dashboard', 'report', 'incidents', 'profile', 'wip', 'evaluation'],
   maintenance_engineer: ['dashboard', 'incidents', 'profile', 'wip'],
   pending: []
 };
@@ -59,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (dbPerms.admin) {
           if (!dbPerms.admin.includes('admin')) dbPerms.admin.push('admin');
           if (!dbPerms.admin.includes('wip')) dbPerms.admin.push('wip');
+          if (!dbPerms.admin.includes('evaluation')) dbPerms.admin.push('evaluation');
         }
         setPermissions({ ...DEFAULT_PERMISSIONS, ...dbPerms });
       } else {

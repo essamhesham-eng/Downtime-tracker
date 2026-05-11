@@ -20,6 +20,7 @@
       "properties": {
         "name": { "type": "string" },
         "allowOutOfOrder": { "type": "boolean", "description": "Whether this line allows reporting 'out of order' incidents" },
+        "colorCode": { "type": ["string", "null"], "description": "Color code for the line in UI" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "createdAt"]

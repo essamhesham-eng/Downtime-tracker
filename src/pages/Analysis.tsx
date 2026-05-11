@@ -166,7 +166,7 @@ export function Analysis() {
     if (inc.durationMinutes != null) return inc.durationMinutes;
     if (!inc.startTime) return 0;
     const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
-    return Math.ceil((getServerTime().getTime() - start.getTime()) / 60000);
+    return Math.floor((getServerTime().getTime() - start.getTime()) / 60000);
   }, []);
 
   // KPIs
@@ -498,7 +498,7 @@ export function Analysis() {
           tooltip="Formula: (shift hours - sum of (each downtime * number of stopped jigs / total number of jigs)) / shift hours"
         />
         <KpiCard 
-          title="MTBF" 
+          title={<span>MTBF <span className="text-gray-400 font-normal">({totalHours}h)</span></span>} 
           value={`${mtbf}h`} 
           icon={<Wrench className="text-purple-500" />}
           tooltip="Mean Time Between Failures: Calculated for each day separately based on production hours (shift hours / number of Failures)."
@@ -906,7 +906,7 @@ export function Analysis() {
   );
 }
 
-function KpiCard({ title, value, trend, icon, tooltip }: { title: string, value: string | number, trend?: number, icon: React.ReactNode, tooltip: string }) {
+function KpiCard({ title, value, trend, icon, tooltip }: { title: React.ReactNode | string, value: string | number, trend?: number, icon: React.ReactNode, tooltip: string }) {
   return (
     <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative group">
       <div className="absolute top-2 right-2">

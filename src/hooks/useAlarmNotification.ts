@@ -105,7 +105,7 @@ export function useAlarmNotification() {
         }
 
         const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-        const duration = Math.ceil((now.getTime() - start.getTime()) / 60000);
+        const duration = Math.floor((now.getTime() - start.getTime()) / 60000);
         
         // Notify at 0, 5, 10, 15... minutes
         const interval = Math.floor(duration / 5);

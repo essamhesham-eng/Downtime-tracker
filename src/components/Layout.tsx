@@ -1,7 +1,7 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, AlertTriangle, Settings, FileSpreadsheet, LogOut, Wrench, User, LineChart, ClipboardList } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, Settings, FileSpreadsheet, LogOut, Wrench, User, LineChart, ClipboardList, Star } from 'lucide-react';
 import { useAlarmNotification } from '../hooks/useAlarmNotification';
 import { AnimatePresence, motion } from 'motion/react';
 
@@ -16,6 +16,7 @@ export function Layout() {
     { path: '/report', label: 'Report Breakdown', icon: AlertTriangle, permission: 'report' },
     { path: '/incidents', label: 'Active Incidents', icon: Wrench, permission: 'incidents' },
     { path: '/wip', label: 'WIP', icon: ClipboardList, permission: 'wip' },
+    { path: '/evaluation', label: 'Evaluation', icon: Star, permission: 'evaluation' },
     { path: '/analysis', label: 'Analysis', icon: LineChart, permission: 'analysis' },
     { path: '/reports', label: 'Export Data', icon: FileSpreadsheet, permission: 'reports' },
     { path: '/admin', label: 'Admin Panel', icon: Settings, permission: 'admin' },

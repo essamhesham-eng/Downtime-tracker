@@ -129,9 +129,10 @@ service cloud.firestore {
     }
 
     function isValidLine(data) {
-      return hasOnlyAllowedFields(['name', 'createdAt', 'id', 'updatedAt', 'allowOutOfOrder', 'wipUpdatedAt']) &&
+      return hasOnlyAllowedFields(['name', 'createdAt', 'id', 'updatedAt', 'allowOutOfOrder', 'wipUpdatedAt', 'colorCode']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              (!('allowOutOfOrder' in data) || data.allowOutOfOrder is bool) &&
+             (!('colorCode' in data) || data.colorCode == null || (data.colorCode is string && data.colorCode.size() <= 20)) &&
              (!('createdAt' in data) || data.createdAt is timestamp) &&
              (!('wipUpdatedAt' in data) || data.wipUpdatedAt is timestamp);
     }
@@ -229,6 +230,33 @@ service cloud.firestore {
              (!('updatedBy' in data) || data.updatedBy is string);
     }
 
+    function isValidOperator(data) {
+      return hasOnlyAllowedFields(['code', 'name', 'createdAt', 'createdBy']) &&
+             data.code is string && data.code.size() > 0 &&
+             data.name is string && data.name.size() > 0 &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string);
+    }
+
+    function isValidEvaluation(data) {
+      return hasOnlyAllowedFields(['operatorCode', 'operatorName', 'pointsChange', 'comment', 'evaluatorId', 'evaluatorName', 'createdAt']) &&
+             data.operatorCode is string && data.operatorCode.size() > 0 &&
+             data.operatorName is string && data.operatorName.size() > 0 &&
+             data.pointsChange is number &&
+             data.comment is string && data.comment.size() > 0 &&
+             (!('evaluatorId' in data) || data.evaluatorId is string) &&
+             (!('evaluatorName' in data) || data.evaluatorName is string) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function canEvaluateOperator() {
+      return isAdmin() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+        getUserData().role == 'manager' ||
+        getUserData().role == 'pd_engineer' ||
+        getUserData().role == 'line_leader'
+      ));
+    }
+
     match /invitations/{email} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidInvitation(request.resource.data);
@@ -254,7 +282,7 @@ service cloud.firestore {
       allow create: if isAdmin() && isValidLine(request.resource.data);
       allow update: if isAuthenticated() && isValidLine(request.resource.data) && (
         (isAdmin() && areImmutableFieldsUnchanged(['createdAt'])) ||
-        (!isAdmin() && areImmutableFieldsUnchanged(['createdAt', 'name', 'allowOutOfOrder']))
+        (!isAdmin() && areImmutableFieldsUnchanged(['createdAt', 'name', 'allowOutOfOrder', 'colorCode']))
       );
       allow delete: if isAdmin();
     }
@@ -318,6 +346,20 @@ service cloud.firestore {
       allow create: if isManagerOrAdmin() && isValidProductionHours(request.resource.data);
       allow update: if isManagerOrAdmin() && isValidProductionHours(request.resource.data);
       allow delete: if isManagerOrAdmin();
+    }
+
+    match /operators/{operatorId} {
+      allow read: if isAuthenticated();
+      allow create: if canEvaluateOperator() && isValidOperator(request.resource.data);
+      allow update: if canEvaluateOperator() && isValidOperator(request.resource.data) && areImmutableFieldsUnchanged(['code', 'createdAt', 'createdBy']);
+      allow delete: if isAdmin();
+    }
+
+    match /evaluations/{evaluationId} {
+      allow read: if isAuthenticated();
+      allow create: if canEvaluateOperator() && isValidEvaluation(request.resource.data);
+      allow update: if false; // append-only
+      allow delete: if isAdmin() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'pd_engineer');
     }
   }
 }

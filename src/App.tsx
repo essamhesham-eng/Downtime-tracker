@@ -18,6 +18,7 @@ import { Reports } from './pages/Reports';
 import { Profile } from './pages/Profile';
 import { Analysis } from './pages/Analysis';
 import { WIP } from './pages/WIP';
+import { Evaluation } from './pages/Evaluation';
 
 function ProtectedRoute({ children, requiredPermission }: { children: React.ReactNode, requiredPermission?: string }) {
   const { user, profile, loading, permissions, signOut } = useAuth();
@@ -192,6 +193,11 @@ function AppRoutes() {
           <Route path="wip" element={
             <ProtectedRoute requiredPermission="wip">
               <WIP />
+            </ProtectedRoute>
+          } />
+          <Route path="evaluation" element={
+            <ProtectedRoute requiredPermission="evaluation">
+              <Evaluation />
             </ProtectedRoute>
           } />
           <Route path="profile" element={

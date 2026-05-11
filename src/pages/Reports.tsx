@@ -15,13 +15,14 @@ export function Reports() {
   const [wipSnapshots, setWipSnapshots] = useState<any[]>([]);
   const [wipEntries, setWipEntries] = useState<any[]>([]);
   const [productionHours, setProductionHours] = useState<any[]>([]);
+  const [evaluations, setEvaluations] = useState<any[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const [users, setUsers] = useState<any[]>([]);
   const [machinesMap, setMachinesMap] = useState<Record<string, string>>({});
   const [linesMap, setLinesMap] = useState<Record<string, string>>({});
   const [lines, setLines] = useState<any[]>([]);
   const [machines, setMachines] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'downtime' | 'wip' | 'shift_hrs' | 'users'>('downtime');
+  const [activeTab, setActiveTab] = useState<'downtime' | 'wip' | 'shift_hrs' | 'users' | 'evaluation'>('downtime');
 
   const [startDate, setStartDate] = useState(format(subDays(getServerTime(), 30), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(getServerTime(), 'yyyy-MM-dd'));
@@ -31,6 +32,9 @@ export function Reports() {
 
   const [selectedLine, setSelectedLine] = useState('all');
   const [selectedMachine, setSelectedMachine] = useState('all');
+
+  const [evalSearchCode, setEvalSearchCode] = useState('');
+  const [evalSearchEvaluator, setEvalSearchEvaluator] = useState('');
 
   const [selectedIncidents, setSelectedIncidents] = useState<string[]>([]);
   const [selectedWipEntries, setSelectedWipEntries] = useState<string[]>([]);
@@ -157,6 +161,15 @@ export function Reports() {
         );
         const snapshotProdHours = await getDocs(qProdHours).catch(e => { throw new Error(step + ' failed: ' + e.message) });
         setProductionHours(snapshotProdHours.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        step = 'evaluations';
+        const qEvals = query(
+          collection(db, 'evaluations'),
+          orderBy('createdAt', 'desc'),
+          limit(2000)
+        );
+        const snapshotEvals = await getDocs(qEvals).catch(e => { throw new Error(step + ' failed: ' + e.message) });
+        setEvaluations(snapshotEvals.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       } catch (error: any) {
         let stepPath = '';
         if (error.message.includes('users failed')) stepPath = 'users';
@@ -166,6 +179,7 @@ export function Reports() {
         else if (error.message.includes('wip_snapshots failed')) stepPath = 'wip_snapshots';
         else if (error.message.includes('wip_entries failed')) stepPath = 'wip_entries';
         else if (error.message.includes('production_hours failed')) stepPath = 'production_hours';
+        else if (error.message.includes('evaluations failed')) stepPath = 'evaluations';
 
         const errInfo = {
           error: error.message || String(error),
@@ -232,11 +246,27 @@ export function Reports() {
     });
   }, [productionHours, shiftStartDate, shiftEndDate, selectedLine]);
 
+  const filteredEvaluations = useMemo(() => {
+    const start = startOfDay(new Date(startDate));
+    const end = endOfDay(new Date(endDate));
+    
+    return evaluations.filter(ev => {
+      if (!ev.createdAt) return false;
+      const evDate = ev.createdAt?.toDate ? ev.createdAt.toDate() : new Date(ev.createdAt);
+      if (evDate < start || evDate > end) return false;
+      
+      if (evalSearchCode && ev.operatorCode && !ev.operatorCode.toLowerCase().includes(evalSearchCode.toLowerCase())) return false;
+      if (evalSearchEvaluator && ev.evaluatorName && !ev.evaluatorName.toLowerCase().includes(evalSearchEvaluator.toLowerCase())) return false;
+
+      return true;
+    });
+  }, [evaluations, startDate, endDate, evalSearchCode, evalSearchEvaluator]);
+
   const getIncidentDuration = React.useCallback((inc: any) => {
     if (inc.durationMinutes != null) return inc.durationMinutes;
     if (!inc.startTime) return 0;
     const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
-    return Math.ceil((getServerTime().getTime() - start.getTime()) / 60000);
+    return Math.floor((getServerTime().getTime() - start.getTime()) / 60000);
   }, []);
 
   const dateRange = useMemo(() => {
@@ -471,6 +501,32 @@ export function Reports() {
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Shift Hrs');
       
       XLSX.writeFile(workbook, `Shift_Hrs_Report_${format(getServerTime(), 'yyyyMMdd_HHmmss')}.xlsx`);
+    } else if (activeTab === 'evaluation') {
+      if (filteredEvaluations.length === 0) {
+        setError('No evaluation data to export.');
+        return;
+      }
+
+      const exportData = filteredEvaluations.map(ev => {
+        let createdAt: Date | null = null;
+        if (ev.createdAt) {
+          createdAt = ev.createdAt?.toDate ? ev.createdAt.toDate() : new Date(ev.createdAt);
+        }
+        return {
+          'Operator Code': ev.operatorCode || 'N/A',
+          'Operator Name': ev.operatorName || 'Unknown',
+          'Points Change': ev.pointsChange,
+          'Comment': ev.comment || 'N/A',
+          'Evaluator': ev.evaluatorName || 'Unknown',
+          'Date & Time': createdAt ? format(createdAt, 'yyyy-MM-dd HH:mm:ss') : 'N/A'
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Evaluations');
+      
+      XLSX.writeFile(workbook, `Evaluations_Report_${format(getServerTime(), 'yyyyMMdd_HHmmss')}.xlsx`);
     } else if (activeTab === 'users') {
       if (users.length === 0) {
         setError('No users data to export.');
@@ -619,7 +675,7 @@ export function Reports() {
         
         <button
           onClick={handleExport}
-          disabled={loading || (activeTab === 'downtime' ? incidents.length === 0 : activeTab === 'wip' ? wipEntries.length === 0 : activeTab === 'shift_hrs' ? productionHours.length === 0 : users.length === 0)}
+          disabled={loading || (activeTab === 'downtime' ? incidents.length === 0 : activeTab === 'wip' ? wipEntries.length === 0 : activeTab === 'shift_hrs' ? productionHours.length === 0 : activeTab === 'evaluation' ? filteredEvaluations.length === 0 : users.length === 0)}
           className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center gap-2"
         >
           <Download size={20} />
@@ -668,6 +724,16 @@ export function Reports() {
         >
           Users Database
         </button>
+        <button
+          onClick={() => setActiveTab('evaluation')}
+          className={`py-3 px-6 font-medium text-sm transition-colors border-b-2 whitespace-nowrap ${
+            activeTab === 'evaluation'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          Evaluation Data
+        </button>
       </div>
 
       {activeTab !== 'users' && (
@@ -710,36 +776,59 @@ export function Reports() {
                 />
               </div>
             )}
-          
-          <select
-            value={selectedLine}
-            onChange={(e) => {
-              setSelectedLine(e.target.value);
-              setSelectedMachine('all');
-            }}
-            className="p-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
-          >
-            <option value="all">All Lines</option>
-            {lines.map(line => (
-              <option key={line.id} value={line.id}>{line.name}</option>
-            ))}
-          </select>
+            
+            {activeTab !== 'evaluation' && (
+              <>
+                <select
+                  value={selectedLine}
+                  onChange={(e) => {
+                    setSelectedLine(e.target.value);
+                    setSelectedMachine('all');
+                  }}
+                  className="p-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
+                >
+                  <option value="all">All Lines</option>
+                  {lines.map(line => (
+                    <option key={line.id} value={line.id}>{line.name}</option>
+                  ))}
+                </select>
 
-          <select
-            value={selectedMachine}
-            onChange={(e) => setSelectedMachine(e.target.value)}
-            className="p-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
-            disabled={selectedLine === 'all'}
-          >
-            <option value="all">All Machines</option>
-            {machines
-              .filter(m => m.lineId === selectedLine)
-              .map(machine => (
-                <option key={machine.id} value={machine.id}>{machine.name}</option>
-              ))}
-          </select>
+                <select
+                  value={selectedMachine}
+                  onChange={(e) => setSelectedMachine(e.target.value)}
+                  className="p-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
+                  disabled={selectedLine === 'all'}
+                >
+                  <option value="all">All Machines</option>
+                  {machines
+                    .filter(m => m.lineId === selectedLine)
+                    .map(machine => (
+                      <option key={machine.id} value={machine.id}>{machine.name}</option>
+                    ))}
+                </select>
+              </>
+            )}
+
+            {activeTab === 'evaluation' && (
+              <>
+                <input
+                  type="text"
+                  value={evalSearchCode}
+                  onChange={(e) => setEvalSearchCode(e.target.value)}
+                  placeholder="Operator Code"
+                  className="p-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <input
+                  type="text"
+                  value={evalSearchEvaluator}
+                  onChange={(e) => setEvalSearchEvaluator(e.target.value)}
+                  placeholder="Evaluator"
+                  className="p-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </>
+            )}
+          </div>
         </div>
-      </div>
       )}
 
       {activeTab === 'downtime' ? (
@@ -1140,6 +1229,56 @@ export function Reports() {
                   <tr>
                     <td colSpan={6} className="p-8 text-center text-gray-500">
                       No users found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'evaluation' && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-max">
+              <thead>
+                <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
+                  <th className="p-4 font-medium">Operator Name</th>
+                  <th className="p-4 font-medium">Code</th>
+                  <th className="p-4 font-medium">Points Change</th>
+                  <th className="p-4 font-medium">Comment</th>
+                  <th className="p-4 font-medium">Evaluator</th>
+                  <th className="p-4 font-medium">Date & Time</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredEvaluations.map(ev => {
+                  let createdAt = 'N/A';
+                  if (ev.createdAt) {
+                    const d = ev.createdAt?.toDate ? ev.createdAt.toDate() : new Date(ev.createdAt);
+                    createdAt = format(d, 'MMM d, yyyy HH:mm');
+                  }
+                  
+                  return (
+                    <tr key={ev.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="p-4 text-gray-800 font-medium">{ev.operatorName || 'Unknown'}</td>
+                      <td className="p-4 text-gray-500 font-mono text-sm">{ev.operatorCode || 'N/A'}</td>
+                      <td className="p-4">
+                        <span className={`px-2 py-1 rounded-md text-xs font-bold ${ev.pointsChange > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {ev.pointsChange > 0 ? '+' : ''}{ev.pointsChange} pts
+                        </span>
+                      </td>
+                      <td className="p-4 text-gray-600 max-w-xs truncate" title={ev.comment}>{ev.comment || 'N/A'}</td>
+                      <td className="p-4 text-gray-800 text-sm">{ev.evaluatorName || 'Unknown'}</td>
+                      <td className="p-4 text-gray-500 text-sm">{createdAt}</td>
+                    </tr>
+                  );
+                })}
+                {filteredEvaluations.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-gray-500">
+                      No evaluation data found for this period.
                     </td>
                   </tr>
                 )}
