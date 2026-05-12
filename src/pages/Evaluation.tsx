@@ -20,6 +20,8 @@ export function Evaluation() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [historySearchCode, setHistorySearchCode] = useState('');
   const [selectedEvaluations, setSelectedEvaluations] = useState<string[]>([]);
+  const [evaluationCauses, setEvaluationCauses] = useState<any[]>([]);
+  const [selectedCause, setSelectedCause] = useState<string>('');
 
   const isPdEngineer = profile?.role === 'pd_engineer';
   const isLineLeader = profile?.role === 'line_leader';
@@ -37,7 +39,15 @@ export function Evaluation() {
       setOperators(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    return () => unsubOps();
+    const qCauses = query(collection(db, 'evaluationCauses'), orderBy('createdAt', 'asc'));
+    const unsubCauses = onSnapshot(qCauses, snapshot => {
+      setEvaluationCauses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => {
+      unsubOps();
+      unsubCauses();
+    };
   }, [canEvaluate]);
   
   const currentPeriod = useMemo(() => {
@@ -110,8 +120,8 @@ export function Evaluation() {
     const name = operatorName.trim();
     const pts = Number(pointsChange);
     
-    if (!code || !name || pointsChange === '' || !comment.trim()) {
-      setErrorCode('Please fill out all fields.');
+    if (!code || !name || pointsChange === '' || !selectedCause) {
+      setErrorCode('Please fill out code, name, points, and cause.');
       return;
     }
     
@@ -126,7 +136,7 @@ export function Evaluation() {
     }
     
     if (pts < 0 && Math.abs(pts) > 3 && isLineLeader && profile?.role !== 'admin') {
-      setErrorCode('Line Leaders can only subtract up to 3 points per comment.');
+      setErrorCode('Line Leaders can only subtract up to 3 points per evaluation.');
       return;
     }
     
@@ -157,6 +167,7 @@ export function Evaluation() {
         operatorCode: code,
         operatorName: name,
         pointsChange: pts,
+        cause: selectedCause,
         comment: comment.trim(),
         evaluatorId: profile?.uid,
         evaluatorName: profile?.displayName,
@@ -168,6 +179,7 @@ export function Evaluation() {
       
       setSuccessMsg(`Evaluation saved for ${name} (${pts > 0 ? '+' : ''}${pts} pts).`);
       setPointsChange('');
+      setSelectedCause('');
       setComment('');
       
     } catch (err: any) {
@@ -351,22 +363,49 @@ export function Evaluation() {
                 </div>
               )}
             </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
+                 Cause <span className="text-red-500">*</span>
+              </label>
+              {evaluationCauses.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {evaluationCauses.map((cause) => (
+                    <button
+                      key={cause.id}
+                      type="button"
+                      onClick={() => setSelectedCause(cause.name)}
+                      className={`py-2 px-4 rounded-lg font-bold text-sm transition-all border ${
+                        selectedCause === cause.name
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                          : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-200'
+                      }`}
+                    >
+                      {cause.name}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-200">
+                  No evaluation causes found. An admin needs to create them in the Admin Panel.
+                </div>
+              )}
+            </div>
             
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Comment</label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Comment (Optional)</label>
               <textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 placeholder="Briefly explain the reason..."
                 rows={3}
                 className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-sm resize-none"
-                required
               ></textarea>
             </div>
             
             <button
               type="submit"
-              disabled={loading || !searchCode || !operatorName || pointsChange === '' || !comment}
+              disabled={loading || !searchCode || !operatorName || pointsChange === '' || !selectedCause}
               className={`w-full py-3.5 font-bold rounded-xl transition-all disabled:opacity-30 flex items-center justify-center gap-2 shadow-md ${
                 isSubmitted 
                   ? 'bg-green-500 text-white hover:bg-green-600' 
@@ -474,7 +513,14 @@ export function Evaluation() {
                       <Trash2 size={16} />
                     </button>
                   )}
-                  <p className="text-sm text-gray-600 bg-white border border-gray-100 p-2 rounded-lg my-1">"{ev.comment}"</p>
+                  {ev.cause && (
+                    <span className="inline-block self-start text-xs font-semibold bg-gray-100 text-gray-700 px-2 py-1 rounded-md mb-1">
+                      {ev.cause}
+                    </span>
+                  )}
+                  {ev.comment && (
+                    <p className="text-sm text-gray-600 bg-white border border-gray-100 p-2 rounded-lg my-1">"{ev.comment}"</p>
+                  )}
                   <div className="flex justify-between items-center text-xs text-gray-400 mt-1 font-medium">
                     <span>{ev.evaluatorName || 'Unknown'}</span>
                     <span>{ev.createdAt?.toDate ? ev.createdAt.toDate().toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Just now'}</span>

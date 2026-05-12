@@ -14,6 +14,7 @@ export function AdminPanel() {
   const [users, setUsers] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
   const [reasonCodes, setReasonCodes] = useState<any[]>([]);
+  const [evaluationCauses, setEvaluationCauses] = useState<any[]>([]);
   const [invitations, setInvitations] = useState<any[]>([]);
 
   const [newLineName, setNewLineName] = useState('');
@@ -28,7 +29,8 @@ export function AdminPanel() {
   const [newGroupUsers, setNewGroupUsers] = useState<string[]>([]);
   const [newReasonCode, setNewReasonCode] = useState('');
   const [newReasonDescription, setNewReasonDescription] = useState('');
-  const [itemToDelete, setItemToDelete] = useState<{type: 'line' | 'machine' | 'group' | 'reasonCode', id: string, name: string} | null>(null);
+  const [newCauseName, setNewCauseName] = useState('');
+  const [itemToDelete, setItemToDelete] = useState<{type: 'line' | 'machine' | 'group' | 'reasonCode' | 'evaluationCause', id: string, name: string} | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
@@ -150,6 +152,11 @@ export function AdminPanel() {
       setInvitations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isInvitation: true })));
     });
 
+    const qCauses = query(collection(db, 'evaluationCauses'), orderBy('createdAt', 'asc'));
+    const unsubCauses = onSnapshot(qCauses, (snapshot) => {
+      setEvaluationCauses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     return () => {
       unsubLines();
       unsubMachines();
@@ -157,6 +164,7 @@ export function AdminPanel() {
       unsubGroups();
       unsubReasonCodes();
       unsubInvitations();
+      unsubCauses();
     };
   }, [profile]);
 
@@ -335,6 +343,25 @@ export function AdminPanel() {
 
   const handleDeleteReasonCode = (codeId: string, codeName: string) => {
     setItemToDelete({ type: 'reasonCode', id: codeId, name: codeName });
+  };
+
+  const handleAddEvaluationCause = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCauseName) return;
+    try {
+      await addDoc(collection(db, 'evaluationCauses'), {
+        name: newCauseName,
+        createdAt: serverTimestamp(),
+      });
+      setNewCauseName('');
+    } catch (error) {
+      console.error('Error adding cause:', error);
+      setErrorMsg('Failed to add cause.');
+    }
+  };
+
+  const handleDeleteEvaluationCause = (causeId: string, causeName: string) => {
+    setItemToDelete({ type: 'evaluationCause', id: causeId, name: causeName });
   };
 
   const handleDragEndLines = async (result: any) => {
@@ -1005,6 +1032,41 @@ export function AdminPanel() {
           </div>
         </div>
 
+        {/* Manage Evaluation Causes */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Evaluation Causes</h3>
+          
+          <form onSubmit={handleAddEvaluationCause} className="flex flex-col sm:flex-row gap-3 mb-6">
+            <input
+              type="text"
+              value={newCauseName}
+              onChange={(e) => setNewCauseName(e.target.value)}
+              placeholder="Cause (e.g., Good Performance, Late)"
+              className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+              <Plus size={18} /> Add Cause
+            </button>
+          </form>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {evaluationCauses.map(cause => (
+              <div key={cause.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50 flex justify-between items-center">
+                <span className="font-medium text-gray-800">{cause.name}</span>
+                <button 
+                  onClick={() => handleDeleteEvaluationCause(cause.id, cause.name)} 
+                  className="text-red-500 hover:text-red-700 p-1 bg-white rounded-md shadow-sm border border-gray-100"
+                  title="Delete Evaluation Cause"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+            {evaluationCauses.length === 0 && <div className="col-span-full text-gray-500 text-center py-4">No evaluation causes found.</div>}
+          </div>
+        </div>
+
       </div>
 
       {/* Role Permissions */}
@@ -1168,6 +1230,8 @@ export function AdminPanel() {
                       await deleteDoc(doc(db, 'groups', itemToDelete.id));
                     } else if (itemToDelete.type === 'reasonCode') {
                       await deleteDoc(doc(db, 'reasonCodes', itemToDelete.id));
+                    } else if (itemToDelete.type === 'evaluationCause') {
+                      await deleteDoc(doc(db, 'evaluationCauses', itemToDelete.id));
                     }
                     setItemToDelete(null);
                   } catch (error) {

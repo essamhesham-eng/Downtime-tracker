@@ -214,6 +214,12 @@ service cloud.firestore {
              (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
+    function isValidEvaluationCause(data) {
+      return hasOnlyAllowedFields(['name', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
     function isValidGroup(data) {
       return hasOnlyAllowedFields(['name', 'userIds', 'id', 'createdAt', 'updatedAt']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
@@ -239,11 +245,12 @@ service cloud.firestore {
     }
 
     function isValidEvaluation(data) {
-      return hasOnlyAllowedFields(['operatorCode', 'operatorName', 'pointsChange', 'comment', 'evaluatorId', 'evaluatorName', 'createdAt']) &&
+      return hasOnlyAllowedFields(['operatorCode', 'operatorName', 'pointsChange', 'comment', 'cause', 'evaluatorId', 'evaluatorName', 'createdAt']) &&
              data.operatorCode is string && data.operatorCode.size() > 0 &&
              data.operatorName is string && data.operatorName.size() > 0 &&
              data.pointsChange is number &&
-             data.comment is string && data.comment.size() > 0 &&
+             (!('comment' in data) || (data.comment is string)) &&
+             (!('cause' in data) || (data.cause is string)) &&
              (!('evaluatorId' in data) || data.evaluatorId is string) &&
              (!('evaluatorName' in data) || data.evaluatorName is string) &&
              (!('createdAt' in data) || data.createdAt is timestamp);
@@ -341,6 +348,13 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /evaluationCauses/{causeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidEvaluationCause(request.resource.data);
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
     match /production_hours/{docId} {
       allow read: if isAuthenticated();
       allow create: if isManagerOrAdmin() && isValidProductionHours(request.resource.data);
@@ -358,7 +372,7 @@ service cloud.firestore {
     match /evaluations/{evaluationId} {
       allow read: if isAuthenticated();
       allow create: if canEvaluateOperator() && isValidEvaluation(request.resource.data);
-      allow update: if (isAdmin() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'pd_engineer')) && areImmutableFieldsUnchanged(['operatorCode', 'evaluatorId', 'pointsChange', 'comment', 'createdAt', 'evaluatorName']); // only allow updating operatorName
+      allow update: if (isAdmin() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'pd_engineer')) && areImmutableFieldsUnchanged(['operatorCode', 'evaluatorId', 'pointsChange', 'comment', 'cause', 'createdAt', 'evaluatorName']); // only allow updating operatorName
       allow delete: if isAdmin() || (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'pd_engineer');
     }
   }

@@ -516,6 +516,7 @@ export function Reports() {
           'Operator Code': ev.operatorCode || 'N/A',
           'Operator Name': ev.operatorName || 'Unknown',
           'Points Change': ev.pointsChange,
+          'Cause': ev.cause || 'N/A',
           'Comment': ev.comment || 'N/A',
           'Evaluator': ev.evaluatorName || 'Unknown',
           'Date & Time': createdAt ? format(createdAt, 'yyyy-MM-dd HH:mm:ss') : 'N/A'
@@ -1247,6 +1248,7 @@ export function Reports() {
                   <th className="p-4 font-medium">Operator Name</th>
                   <th className="p-4 font-medium">Code</th>
                   <th className="p-4 font-medium">Points Change</th>
+                  <th className="p-4 font-medium">Cause</th>
                   <th className="p-4 font-medium">Comment</th>
                   <th className="p-4 font-medium">Evaluator</th>
                   <th className="p-4 font-medium">Date & Time</th>
@@ -1269,6 +1271,7 @@ export function Reports() {
                           {ev.pointsChange > 0 ? '+' : ''}{ev.pointsChange} pts
                         </span>
                       </td>
+                      <td className="p-4 text-gray-800 text-sm whitespace-nowrap">{ev.cause || 'N/A'}</td>
                       <td className="p-4 text-gray-600 max-w-xs truncate" title={ev.comment}>{ev.comment || 'N/A'}</td>
                       <td className="p-4 text-gray-800 text-sm">{ev.evaluatorName || 'Unknown'}</td>
                       <td className="p-4 text-gray-500 text-sm">{createdAt}</td>
