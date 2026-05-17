@@ -4,6 +4,7 @@ import { db } from '../firebase';
 import { Crown, Info, Clock, LayoutGrid, List } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { format } from 'date-fns';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface Line {
   id: string;
@@ -44,6 +45,21 @@ export function Dashboard() {
   const [productionHours, setProductionHours] = useState<Record<string, number>>({});
   const [now, setNow] = useState(getServerTime());
   const [isCompactView, setIsCompactView] = useState(false);
+  const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (selectedMachineId) {
+        const target = event.target as HTMLElement;
+        if (!target.closest('.machine-container')) {
+          setSelectedMachineId(null);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [selectedMachineId]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(getServerTime()), 30000); // Update every 30 seconds
@@ -70,7 +86,10 @@ export function Dashboard() {
       setMachines(fetchedMachines);
     });
 
-    const qIncidents = query(collection(db, 'incidents'), where('status', 'in', ['open', 'working_on', 'pending_me_review']));
+    const startOfToday = new Date(getServerTime());
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const qIncidents = query(collection(db, 'incidents'), where('startTime', '>=', startOfToday));
     const unsubIncidents = onSnapshot(qIncidents, (snapshot) => {
       setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident)));
     });
@@ -108,6 +127,39 @@ export function Dashboard() {
     const start = startTime.toDate ? startTime.toDate() : new Date(startTime);
     return Math.floor((now.getTime() - start.getTime()) / 60000);
   }, [now]);
+
+  const getMachineStats = React.useCallback((machineId: string, lineId: string) => {
+    const machineIncidents = incidents.filter(i => i.machineId === machineId);
+    
+    let totalMins = 0;
+    const today = new Date(getServerTime());
+    today.setHours(0, 0, 0, 0);
+
+    machineIncidents.forEach(incident => {
+      const start = incident.startTime.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
+      const end = incident.endTime?.toDate 
+        ? incident.endTime.toDate() 
+        : (incident.status === 'resolved' ? start : getServerTime());
+      
+      // Calculate overlap with today
+      const overlapStart = Math.max(start.getTime(), today.getTime());
+      const overlapEnd = Math.min(end.getTime(), getServerTime().getTime());
+      
+      if (overlapEnd > overlapStart) {
+        totalMins += Math.floor((overlapEnd - overlapStart) / 60000);
+      }
+    });
+
+    const shiftHours = productionHours[lineId] ?? 9;
+    const totalShiftMins = shiftHours * 60;
+    const downPercent = totalShiftMins > 0 ? (totalMins / totalShiftMins) * 100 : 0;
+
+    return {
+      events: machineIncidents.length,
+      mins: totalMins,
+      percent: downPercent
+    };
+  }, [incidents, productionHours]);
 
   return (
     <div className="space-y-6">
@@ -180,7 +232,7 @@ export function Dashboard() {
                       const iconSize = isCompactView ? 'w-8 h-8' : 'w-12 h-12';
                       
                       return (
-                        <div key={machine.id} className="flex items-center">
+                        <div key={machine.id} className="flex items-center machine-container">
                           {/* Connector line and WIP before the machine */}
                           {(index > 0 || (machine.wip !== undefined && machine.wip !== null && machine.wip !== '')) && (
                             <div className={`flex flex-col items-center justify-center relative mx-0.5 ${isCompactView ? 'w-4 h-8' : 'w-8 h-12'}`}>
@@ -194,8 +246,9 @@ export function Dashboard() {
                           )}
                           
                           <div className="flex flex-col items-center group relative">
-                            <div 
-                              className={`${iconSize} rounded-full flex items-center justify-center text-white shadow-md transition-transform transform hover:scale-105 relative ${
+                            <button 
+                              onClick={() => setSelectedMachineId(selectedMachineId === machine.id ? null : machine.id)}
+                              className={`${iconSize} rounded-full flex items-center justify-center text-white shadow-md transition-transform transform hover:scale-105 active:scale-95 relative outline-none ${
                                 isDown ? (incident?.type === 'out_of_order' ? 'bg-amber-500 animate-pulse' : 'bg-red-500 animate-pulse') : 'bg-green-500'
                               }`}
                             >
@@ -205,14 +258,53 @@ export function Dashboard() {
                                 </div>
                               )}
                               <span className={`font-bold truncate px-0.5 ${isCompactView ? 'text-[8px]' : 'text-xs'}`}>{machine.name.substring(0, 3)}</span>
-                            </div>
+                            </button>
                             
-                            {/* Tooltip */}
-                            <div className="absolute -bottom-10 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 text-white text-[10px] rounded py-1 px-2 whitespace-nowrap z-20 pointer-events-none flex flex-col items-center gap-1">
-                              <span>{machine.name}</span>
-                            </div>
+                            {/* Analysis Card */}
+                            <AnimatePresence>
+                              {selectedMachineId === machine.id && (
+                                <motion.div 
+                                  initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                                  exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="absolute top-[110%] left-1/2 -translate-x-1/2 z-50 bg-white border border-gray-200 rounded-xl shadow-xl p-3 min-w-[120px]"
+                                >
+                                  <div className="space-y-1.5">
+                                    {(() => {
+                                      const stats = getMachineStats(machine.id, line.id);
+                                      return (
+                                        <>
+                                          <div className="flex justify-between items-center text-[10px] sm:text-xs">
+                                            <span className="text-gray-500">Events:</span>
+                                            <span className="font-bold text-gray-800">{stats.events}</span>
+                                          </div>
+                                          <div className="flex justify-between items-center text-[10px] sm:text-xs">
+                                            <span className="text-gray-500">Mins:</span>
+                                            <span className="font-bold text-red-600">{stats.mins}</span>
+                                          </div>
+                                          <div className="h-[1px] bg-gray-100 my-1"></div>
+                                          <div className="flex justify-between items-center text-[10px] sm:text-xs">
+                                            <span className="text-gray-500">Down:</span>
+                                            <span className={`font-bold ${stats.percent > 10 ? 'text-red-600' : 'text-orange-500'}`}>{stats.percent.toFixed(1)}%</span>
+                                          </div>
+                                        </>
+                                      );
+                                    })()}
+                                  </div>
+                                  <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-t border-l border-gray-200 rotate-45"></div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+
+                            {/* Tooltip (only if not analysis card) */}
+                            {selectedMachineId !== machine.id && (
+                              <div className="absolute -bottom-10 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 text-white text-[10px] rounded py-1 px-2 whitespace-nowrap z-20 pointer-events-none flex flex-col items-center gap-1">
+                                <span>{machine.name}</span>
+                              </div>
+                            )}
                             
-                            {isDown && (
+                            {isDown && selectedMachineId !== machine.id && (
                               <div className={`flex flex-col items-center ${isCompactView ? 'mt-0.5' : 'mt-1'}`}>
                                 <span className={`font-bold text-red-600 ${isCompactView ? 'text-[9px]' : 'text-xs'}`}>
                                   {duration}m

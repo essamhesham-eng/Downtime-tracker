@@ -2,14 +2,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, writeBatch, getDocs, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Wrench, Save, Clock, Plus, Trash2 } from 'lucide-react';
+import { Wrench, Save, Clock, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { format } from 'date-fns';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface Line {
   id: string;
   name: string;
   order: number;
   wipUpdatedAt?: any;
+  colorCode?: string;
 }
 
 interface Machine {
@@ -43,8 +45,28 @@ export function WIP() {
   const [snapshots, setSnapshots] = useState<Record<string, WipSnapshot[]>>({});
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<Record<string, string>>({});
   const [isLoadingHistory, setIsLoadingHistory] = useState<Record<string, boolean>>({});
+  const [expandedLines, setExpandedLines] = useState<Record<string, boolean>>({});
   
   const dirtyLinesRef = useRef<Set<string>>(new Set());
+
+  const toggleLine = (lineId: string) => {
+    setExpandedLines(prev => ({ ...prev, [lineId]: !prev[lineId] }));
+  };
+
+  const getColorClasses = (color?: string) => {
+    const c = color || 'blue';
+    const map: Record<string, { bg: string, border: string, text: string, light: string, accent: string }> = {
+      blue: { bg: 'bg-blue-600', border: 'border-blue-100', text: 'text-blue-700', light: 'bg-blue-50', accent: 'border-blue-500' },
+      emerald: { bg: 'bg-emerald-600', border: 'border-emerald-100', text: 'text-emerald-700', light: 'bg-emerald-50', accent: 'border-emerald-500' },
+      purple: { bg: 'bg-purple-600', border: 'border-purple-100', text: 'text-purple-700', light: 'bg-purple-50', accent: 'border-purple-500' },
+      amber: { bg: 'bg-amber-600', border: 'border-amber-100', text: 'text-amber-700', light: 'bg-amber-50', accent: 'border-amber-500' },
+      pink: { bg: 'bg-pink-600', border: 'border-pink-100', text: 'text-pink-700', light: 'bg-pink-50', accent: 'border-pink-500' },
+      indigo: { bg: 'bg-indigo-600', border: 'border-indigo-100', text: 'text-indigo-700', light: 'bg-indigo-50', accent: 'border-indigo-500' },
+      rose: { bg: 'bg-rose-600', border: 'border-rose-100', text: 'text-rose-700', light: 'bg-rose-50', accent: 'border-rose-500' },
+      cyan: { bg: 'bg-cyan-600', border: 'border-cyan-100', text: 'text-cyan-700', light: 'bg-cyan-50', accent: 'border-cyan-500' },
+    };
+    return map[c] || map.blue;
+  };
 
   useEffect(() => {
     const qLines = query(collection(db, 'lines'), orderBy('createdAt', 'asc'));
@@ -283,108 +305,133 @@ export function WIP() {
         {lines.map(line => {
           const lineMachines = machines.filter(m => m.lineId === line.id).sort((a, b) => (a.order || 0) - (b.order || 0));
           const rows = lineRows[line.id] || [];
+          const colors = getColorClasses(line.colorCode);
+          const isExpanded = expandedLines[line.id] || false;
           
           if (lineMachines.length === 0) return null;
 
           return (
-            <div key={line.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div key={line.id} className={`bg-white rounded-xl shadow-sm border ${isExpanded ? colors.accent : 'border-gray-100'} overflow-hidden transition-all duration-300`}>
+              <button 
+                onClick={() => toggleLine(line.id)}
+                className={`w-full text-left ${colors.light} px-6 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-colors hover:opacity-90`}
+              >
                 <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                  <h3 className="text-lg font-bold text-gray-800">{line.name}</h3>
-                  <div className="flex items-center gap-2">
-                    <Clock size={16} className="text-gray-400" />
-                    <select
-                      value={selectedSnapshotId[line.id] || ''}
-                      onChange={(e) => handleSnapshotChange(line.id, e.target.value)}
-                      className="text-sm border border-gray-300 rounded-lg p-1.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white min-w-[200px]"
-                    >
-                      <option value="">Current Live View</option>
-                      {snapshots[line.id]?.map(s => (
-                        <option key={s.id} value={s.id}>
-                          {s.createdAt?.toDate ? format(s.createdAt.toDate(), 'MMM d, yyyy HH:mm') : 'Recently added'}
-                        </option>
-                      ))}
-                    </select>
-                    {isLoadingHistory[line.id] && <span className="text-xs text-blue-500 animate-pulse">Loading...</span>}
+                  <div className="flex items-center gap-3">
+                    <div className={`w-3 h-3 rounded-full ${colors.bg}`}></div>
+                    <h3 className={`text-lg font-bold ${colors.text}`}>{line.name}</h3>
+                    {isExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
                   </div>
-                </div>
-                {line.wipUpdatedAt && (
-                  <div className="text-sm text-gray-500 flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-full border border-gray-200 shadow-sm">
-                    <Clock size={14} className="text-blue-500" />
-                    <span>Last updated: <span className="font-medium text-gray-700">{line.wipUpdatedAt?.toDate ? format(line.wipUpdatedAt.toDate(), 'MMM d, yyyy HH:mm') : 'Just now'}</span></span>
-                  </div>
-                )}
-              </div>
-              <div className="p-6 space-y-4">
-                {rows.length > 0 ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-4 px-2 text-sm font-medium text-gray-500 uppercase tracking-wider">
-                      <div className="flex-1">WIP Quantity</div>
-                      <div className="flex-1">Machine</div>
-                      <div className="w-10"></div>
+                  {isExpanded && (
+                    <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                      <Clock size={16} className="text-gray-400" />
+                      <select
+                        value={selectedSnapshotId[line.id] || ''}
+                        onChange={(e) => handleSnapshotChange(line.id, e.target.value)}
+                        className="text-sm border border-gray-300 rounded-lg p-1.5 focus:ring-2 focus:ring-blue-500 outline-none bg-white min-w-[200px]"
+                      >
+                        <option value="">Current Live View</option>
+                        {snapshots[line.id]?.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.createdAt?.toDate ? format(s.createdAt.toDate(), 'MMM d, yyyy HH:mm') : 'Recently added'}
+                          </option>
+                        ))}
+                      </select>
+                      {isLoadingHistory[line.id] && <span className="text-xs text-blue-500 animate-pulse">Loading...</span>}
                     </div>
-                    {rows.map((row) => (
-                      <div key={row.id} className="flex items-center gap-4 bg-gray-50 p-2 rounded-lg border border-gray-200">
-                        <div className="flex-1">
-                          <input
-                            type="number"
-                            value={row.wip}
-                            onChange={(e) => handleRowChange(line.id, row.id, 'wip', e.target.value)}
-                            placeholder="Enter WIP"
-                            className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                          />
+                  )}
+                </div>
+                <div className="flex items-center gap-4">
+                  {line.wipUpdatedAt && (
+                    <div className="text-sm text-gray-500 flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-full border border-gray-200 shadow-sm">
+                      <Clock size={14} className="text-blue-500" />
+                      <span>Last updated: <span className="font-medium text-gray-700">{line.wipUpdatedAt?.toDate ? format(line.wipUpdatedAt.toDate(), 'MMM d, yyyy HH:mm') : 'Just now'}</span></span>
+                    </div>
+                  )}
+                </div>
+              </button>
+              
+              <AnimatePresence>
+                {isExpanded && (
+                  <motion.div 
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3, ease: 'easeInOut' }}
+                  >
+                    <div className="p-6 space-y-4">
+                      {rows.length > 0 ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-4 px-2 text-sm font-medium text-gray-500 uppercase tracking-wider">
+                            <div className="flex-1">WIP Quantity</div>
+                            <div className="flex-1">Machine</div>
+                            <div className="w-10"></div>
+                          </div>
+                          {rows.map((row) => (
+                            <div key={row.id} className="flex items-center gap-4 bg-gray-50 p-2 rounded-lg border border-gray-200">
+                              <div className="flex-1">
+                                <input
+                                  type="number"
+                                  value={row.wip}
+                                  onChange={(e) => handleRowChange(line.id, row.id, 'wip', e.target.value)}
+                                  placeholder="Enter WIP"
+                                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <select
+                                  value={row.machineId}
+                                  onChange={(e) => handleRowChange(line.id, row.id, 'machineId', e.target.value)}
+                                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                >
+                                  <option value="">Select Machine</option>
+                                  {lineMachines.map(m => (
+                                    <option key={m.id} value={m.id}>{m.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <button
+                                onClick={() => handleRemoveRow(line.id, row.id)}
+                                className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Remove row"
+                              >
+                                <Trash2 size={20} />
+                              </button>
+                            </div>
+                          ))}
                         </div>
-                        <div className="flex-1">
-                          <select
-                            value={row.machineId}
-                            onChange={(e) => handleRowChange(line.id, row.id, 'machineId', e.target.value)}
-                            className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                          >
-                            <option value="">Select Machine</option>
-                            {lineMachines.map(m => (
-                              <option key={m.id} value={m.id}>{m.name}</option>
-                            ))}
-                          </select>
+                      ) : (
+                        <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200 border-dashed text-gray-500">
+                          No WIP entries. Click "Add new" to create one.
                         </div>
+                      )}
+                      
+                      <button
+                        onClick={() => handleAddRow(line.id)}
+                        className="w-full py-3 mt-4 border-2 border-dashed border-gray-300 text-gray-500 rounded-lg hover:border-blue-400 hover:text-blue-500 transition-colors flex items-center justify-center gap-2 font-medium"
+                      >
+                        <Plus size={20} />
+                        Add new
+                      </button>
+                      
+                      <div className="pt-6 mt-6 border-t border-gray-100 flex justify-end">
                         <button
-                          onClick={() => handleRemoveRow(line.id, row.id)}
-                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Remove row"
+                          onClick={() => handleSaveWip(line.id)}
+                          disabled={isSaving[line.id]}
+                          className={`px-6 py-2.5 rounded-lg font-medium transition-all flex items-center gap-2 shadow-sm ${
+                            saveSuccess[line.id]
+                              ? 'bg-green-500 text-white hover:bg-green-600'
+                              : 'bg-blue-600 text-white hover:bg-blue-700'
+                          }`}
                         >
-                          <Trash2 size={20} />
+                          <Save size={20} />
+                          {isSaving[line.id] ? 'Saving...' : saveSuccess[line.id] ? 'Saved!' : 'Save Changes'}
                         </button>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200 border-dashed text-gray-500">
-                    No WIP entries. Click "Add new" to create one.
-                  </div>
+                    </div>
+                  </motion.div>
                 )}
-                
-                <button
-                  onClick={() => handleAddRow(line.id)}
-                  className="w-full py-3 mt-4 border-2 border-dashed border-gray-300 text-gray-500 rounded-lg hover:border-blue-400 hover:text-blue-500 transition-colors flex items-center justify-center gap-2 font-medium"
-                >
-                  <Plus size={20} />
-                  Add new
-                </button>
-                
-                <div className="pt-6 mt-6 border-t border-gray-100 flex justify-end">
-                  <button
-                    onClick={() => handleSaveWip(line.id)}
-                    disabled={isSaving[line.id]}
-                    className={`px-6 py-2.5 rounded-lg font-medium transition-all flex items-center gap-2 shadow-sm ${
-                      saveSuccess[line.id]
-                        ? 'bg-green-500 text-white hover:bg-green-600'
-                        : 'bg-blue-600 text-white hover:bg-blue-700'
-                    }`}
-                  >
-                    <Save size={20} />
-                    {isSaving[line.id] ? 'Saving...' : saveSuccess[line.id] ? 'Saved!' : 'Save Changes'}
-                  </button>
-                </div>
-              </div>
+              </AnimatePresence>
             </div>
           );
         })}
