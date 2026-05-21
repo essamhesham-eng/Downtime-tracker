@@ -545,7 +545,7 @@ export function IncidentsList() {
                       {lineIncidents.map(incident => {
                         const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
                         const isPendingReview = incident.status === 'pending_me_review';
-                        const duration = isPendingReview && incident.durationMinutes 
+                        const duration = isPendingReview && incident.durationMinutes != null 
                           ? incident.durationMinutes 
                           : Math.floor((now.getTime() - start.getTime()) / 60000);
                         const isWorkingOn = incident.status === 'working_on';
@@ -864,7 +864,7 @@ export function IncidentsList() {
             </h3>
             <div className="mb-4 p-3 bg-blue-50 text-blue-800 rounded-lg text-sm">
               <p><strong>Machine:</strong> {reviewingIncident.machineName}</p>
-              <p><strong>Downtime:</strong> {reviewingIncident.durationMinutes ? `${reviewingIncident.durationMinutes} minutes` : 'Ongoing'}</p>
+              <p><strong>Downtime:</strong> {reviewingIncident.durationMinutes != null ? `${reviewingIncident.durationMinutes} minutes` : 'Ongoing'}</p>
             </div>
             <form onSubmit={submitReview} className="space-y-4">
               {reviewingIncident.type === 'out_of_order' ? (

@@ -565,7 +565,7 @@ export function Reports() {
   const handleEditClick = (incident: any) => {
     setEditingIncident(incident);
     setEditStatus(incident.status);
-    setEditDuration(incident.durationMinutes || '');
+    setEditDuration(incident.durationMinutes != null ? incident.durationMinutes : '');
     setEditMachineName(incident.machineName || '');
     setEditLineName(incident.lineName || '');
     setEditReportedBy(incident.reportedBy || '');
