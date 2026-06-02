@@ -5,7 +5,7 @@ import cron from 'node-cron';
 import nodemailer from 'nodemailer';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, collection, getDocs, doc, getDoc, updateDoc, deleteDoc, query, where, Timestamp } from 'firebase/firestore';
+import { initializeFirestore, collection, getDocs, doc, getDoc, updateDoc, deleteDoc, query, where, Timestamp } from 'firebase/firestore';
 import fs from 'fs';
 
 const formatName = (name: string) => {
@@ -24,7 +24,9 @@ async function startServer() {
   const firebaseConfig = JSON.parse(fs.readFileSync('./firebase-applet-config.json', 'utf8'));
   const firebaseApp = initializeApp(firebaseConfig);
   const auth = getAuth(firebaseApp);
-  const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+  const db = initializeFirestore(firebaseApp, {
+    experimentalForceLongPolling: true,
+  }, firebaseConfig.firestoreDatabaseId);
 
   // Authenticate as cron user
   try {

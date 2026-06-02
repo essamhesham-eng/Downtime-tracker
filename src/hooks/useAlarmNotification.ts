@@ -10,13 +10,20 @@ export function useAlarmNotification() {
   const notifiedIntervals = useRef<Record<string, number>>({});
   const [activeAlarm, setActiveAlarm] = useState<{ message: string; id: string } | null>(null);
   const [groups, setGroups] = useState<any[]>([]);
+  const [lines, setLines] = useState<any[]>([]);
 
   useEffect(() => {
     if (!user) return;
     const unsubGroups = onSnapshot(collection(db, 'groups'), snapshot => {
       setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
-    return () => unsubGroups();
+    const unsubLines = onSnapshot(collection(db, 'lines'), snapshot => {
+      setLines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => {
+      unsubGroups();
+      unsubLines();
+    };
   }, [user]);
 
   useEffect(() => {
@@ -87,7 +94,9 @@ export function useAlarmNotification() {
     const checkAlarms = () => {
       const now = getServerTime();
       currentIncidents.forEach(incident => {
-        if (incident.type === 'out_of_order') return; // Don't notify MEs for out of order
+        const line = lines.find(l => l.id === incident.lineId);
+        if (line && line.status === 'line_off') return;
+        if (incident.type === 'line_off') return; // Don't notify MEs for line off
 
         if (profile?.role === 'maintenance_engineer' && user) {
           const hasGroups = incident.assignedGroups && incident.assignedGroups.length > 0;
@@ -105,7 +114,7 @@ export function useAlarmNotification() {
         }
 
         const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-        const duration = Math.floor((now.getTime() - start.getTime()) / 60000);
+        const duration = Math.max(1, Math.ceil((now.getTime() - start.getTime()) / 60000));
         
         // Notify at 0, 5, 10, 15... minutes
         const interval = Math.floor(duration / 5);
@@ -128,7 +137,7 @@ export function useAlarmNotification() {
       unsub();
       clearInterval(timer);
     };
-  }, [profile, user, groups]);
+  }, [profile, user, groups, lines]);
 
   return { activeAlarm, setActiveAlarm };
 }

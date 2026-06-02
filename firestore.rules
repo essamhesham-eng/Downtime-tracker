@@ -129,10 +129,12 @@ service cloud.firestore {
     }
 
     function isValidLine(data) {
-      return hasOnlyAllowedFields(['name', 'createdAt', 'id', 'updatedAt', 'allowOutOfOrder', 'wipUpdatedAt', 'colorCode']) &&
+      return hasOnlyAllowedFields(['name', 'createdAt', 'id', 'updatedAt', 'allowOutOfOrder', 'wipUpdatedAt', 'colorCode', 'status', 'currentIssueId']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              (!('allowOutOfOrder' in data) || data.allowOutOfOrder is bool) &&
              (!('colorCode' in data) || data.colorCode == null || (data.colorCode is string && data.colorCode.size() <= 20)) &&
+             (!('status' in data) || data.status in ['running', 'upcoming', 'stopped', 'line_off']) &&
+             (!('currentIssueId' in data) || data.currentIssueId == null || data.currentIssueId is string) &&
              (!('createdAt' in data) || data.createdAt is timestamp) &&
              (!('wipUpdatedAt' in data) || data.wipUpdatedAt is timestamp);
     }
@@ -171,13 +173,16 @@ service cloud.firestore {
     }
 
     function isValidIncident(data) {
-      return hasOnlyAllowedFields(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'reportedByName', 'startTime', 'endTime', 'status', 'workingOnBy', 'workingOnAt', 'resolvedBy', 'resolvedByName', 'durationMinutes', 'id', 'updatedAt', 'cause', 'action', 'reviewedBy', 'reviewedAt', 'assignedTo', 'assignedGroups', 'breakdownJigs', 'totalJigs', 'type', 'causeImageUrl', 'actionImageUrl', 'reasonCode']) &&
+      return hasOnlyAllowedFields(['lineId', 'machineId', 'machineName', 'lineName', 'reportedBy', 'reportedByName', 'startTime', 'endTime', 'status', 'workingOnBy', 'workingOnAt', 'resolvedBy', 'resolvedByName', 'durationMinutes', 'id', 'updatedAt', 'cause', 'action', 'reviewedBy', 'reviewedAt', 'assignedTo', 'assignedGroups', 'breakdownJigs', 'totalJigs', 'type', 'causeImageUrl', 'actionImageUrl', 'reasonCode', 'rootCause', 'remainingTimeMinutes', 'lineIssueType']) &&
              data.lineId is string && data.lineId.size() > 0 && data.lineId.size() < 100 &&
              data.machineId is string && data.machineId.size() > 0 && data.machineId.size() < 100 &&
              data.machineName is string && data.machineName.size() > 0 && data.machineName.size() < 100 &&
              data.lineName is string && data.lineName.size() > 0 && data.lineName.size() < 100 &&
              data.reportedBy is string && data.reportedBy.size() > 0 && data.reportedBy.size() < 100 &&
              (!('reportedByName' in data) || data.reportedByName == null || (data.reportedByName is string && data.reportedByName.size() < 100)) &&
+             (!('rootCause' in data) || data.rootCause == null || (data.rootCause is string && data.rootCause.size() < 500)) &&
+             (!('lineIssueType' in data) || data.lineIssueType == null || data.lineIssueType in ['upcoming', 'stopped', 'line_off']) &&
+             (!('remainingTimeMinutes' in data) || data.remainingTimeMinutes == null || data.remainingTimeMinutes is number) &&
              (!('startTime' in data) || data.startTime is timestamp) &&
              (!('endTime' in data) || data.endTime == null || data.endTime is timestamp) &&
              data.status in ['open', 'working_on', 'resolved', 'pending_me_review'] &&
@@ -208,22 +213,26 @@ service cloud.firestore {
     }
 
     function isValidReasonCode(data) {
-      return hasOnlyAllowedFields(['code', 'description', 'id', 'createdAt', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['code', 'description', 'id', 'createdAt', 'updatedAt', 'order']) &&
              data.code is string && data.code.size() > 0 && data.code.size() < 100 &&
              data.description is string && data.description.size() > 0 && data.description.size() < 500 &&
+             (!('order' in data) || data.order is number) &&
              (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     function isValidEvaluationCause(data) {
-      return hasOnlyAllowedFields(['name', 'createdAt']) &&
+      return hasOnlyAllowedFields(['name', 'createdAt', 'order']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('order' in data) || data.order is number) &&
              (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     function isValidGroup(data) {
-      return hasOnlyAllowedFields(['name', 'userIds', 'id', 'createdAt', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['name', 'userIds', 'id', 'createdAt', 'updatedAt', 'order', 'showInOutofOrder']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              (!('userIds' in data) || data.userIds == null || (data.userIds is list && data.userIds.size() < 500)) &&
+             (!('order' in data) || data.order is number) &&
+             (!('showInOutofOrder' in data) || data.showInOutofOrder is bool) &&
              (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
@@ -351,7 +360,7 @@ service cloud.firestore {
     match /evaluationCauses/{causeId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidEvaluationCause(request.resource.data);
-      allow update: if false;
+      allow update: if isAdmin() && isValidEvaluationCause(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
       allow delete: if isAdmin();
     }
 

@@ -4,11 +4,12 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { format, subDays, isWithinInterval, startOfDay, endOfDay, startOfMonth, endOfMonth } from 'date-fns';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, ComposedChart
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, ComposedChart, PieChart, Pie, Cell
 } from 'recharts';
 import { Clock, AlertTriangle, Activity, Wrench, Info, Loader2, Calendar } from 'lucide-react';
 import { getServerTime } from '../utils/time';
 import { ProductionHoursModal } from '../components/ProductionHoursModal';
+import { MultiSelect } from '../components/MultiSelect';
 
 export function Analysis() {
   const { profile, user } = useAuth();
@@ -19,10 +20,31 @@ export function Analysis() {
   
   const [startDate, setStartDate] = useState(format(subDays(getServerTime(), 30), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(getServerTime(), 'yyyy-MM-dd'));
-  const [selectedLine, setSelectedLine] = useState('all');
-  const [selectedMachine, setSelectedMachine] = useState('all');
+  const [selectedLines, setSelectedLines] = useState<string[]>([]);
+  const [selectedMachines, setSelectedMachines] = useState<string[]>([]);
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+
+  const [appliedStartDate, setAppliedStartDate] = useState(startDate);
+  const [appliedEndDate, setAppliedEndDate] = useState(endDate);
+  const [appliedSelectedLines, setAppliedSelectedLines] = useState(selectedLines);
+  const [appliedSelectedMachines, setAppliedSelectedMachines] = useState(selectedMachines);
+  const [appliedSelectedGroups, setAppliedSelectedGroups] = useState(selectedGroups);
+  const [appliedSelectedTypes, setAppliedSelectedTypes] = useState(selectedTypes);
+
+  const handleApplyFilters = () => {
+    setAppliedStartDate(startDate);
+    setAppliedEndDate(endDate);
+    setAppliedSelectedLines(selectedLines);
+    setAppliedSelectedMachines(selectedMachines);
+    setAppliedSelectedGroups(selectedGroups);
+    setAppliedSelectedTypes(selectedTypes);
+  };
+
   const [trendMetric, setTrendMetric] = useState<'hours' | 'minutes' | 'days' | 'events'>('minutes');
   const [mttrTrendMetric, setMttrTrendMetric] = useState<'minutes' | 'hours' | 'days'>('hours');
+  const [teamPerformanceMetric, setTeamPerformanceMetric] = useState<'days' | 'hours' | 'minutes' | 'events'>('minutes');
+  const [incidentTypesMetric, setIncidentTypesMetric] = useState<'days' | 'hours' | 'minutes' | 'events'>('minutes');
   const [productionHoursData, setProductionHoursData] = useState<any[]>([]);
   const [isProductionHoursModalOpen, setIsProductionHoursModalOpen] = useState(false);
 
@@ -57,6 +79,28 @@ export function Analysis() {
     }
   };
 
+  // 1. Subscribe to static/metadata collections ONLY ONCE on mount/auth-change
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubMachines = onSnapshot(query(collection(db, 'machines')), snapshot => {
+      setMachines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    const unsubLines = onSnapshot(query(collection(db, 'lines')), snapshot => {
+      setLines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    const unsubGroups = onSnapshot(query(collection(db, 'groups')), snapshot => {
+      setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => { 
+      unsubMachines(); 
+      unsubLines(); 
+      unsubGroups(); 
+    };
+  }, [user]);
+
+  // 2. Subscribe to incidents dynamically based on date range (avoids loading other collections again)
   useEffect(() => {
     if (!user) return;
 
@@ -75,23 +119,19 @@ export function Analysis() {
         setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       }
     );
-    const unsubMachines = onSnapshot(query(collection(db, 'machines')), snapshot => {
-      setMachines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-    const unsubLines = onSnapshot(query(collection(db, 'lines')), snapshot => {
-      setLines(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-    const unsubGroups = onSnapshot(query(collection(db, 'groups')), snapshot => {
-      setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+
+    const prevStartStr = format(prevStart, 'yyyy-MM-dd');
     const unsubProductionHours = onSnapshot(
-      query(collection(db, 'production_hours'), limit(5000)), 
+      query(collection(db, 'production_hours'), where('date', '>=', prevStartStr), limit(5000)), 
       snapshot => {
         setProductionHoursData(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       }
     );
 
-    return () => { unsubIncidents(); unsubMachines(); unsubLines(); unsubGroups(); unsubProductionHours(); };
+    return () => { 
+      unsubIncidents(); 
+      unsubProductionHours();
+    };
   }, [user, startDate, endDate]);
 
   const userGroups = useMemo(() => {
@@ -99,90 +139,102 @@ export function Analysis() {
     return groups.filter(g => g.userIds?.includes(profile.uid)).map(g => g.id);
   }, [profile, groups]);
 
-  const filteredIncidents = useMemo(() => {
-    const start = startOfDay(new Date(startDate));
-    const end = endOfDay(new Date(endDate));
+  const matchesFilters = React.useCallback((inc: any, interval?: { start: Date, end: Date }) => {
+    if (!inc.startTime) return false;
     
-    return incidents.filter(inc => {
-      if (!inc.startTime) return false;
-      if (inc.type === 'out_of_order') return false; // Exclude out of order incidents
-      
+    if (interval) {
       const incStart = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
-      if (!isWithinInterval(incStart, { start, end })) return false;
-      
-      if (selectedLine !== 'all' && inc.lineName !== lines.find(l => l.id === selectedLine)?.name) return false;
-      if (selectedMachine !== 'all' && inc.machineId !== selectedMachine) return false;
-      
-      if (profile?.role !== 'admin' && profile?.role !== 'manager' && user) {
-        if (inc.reportedBy === user.uid) return true;
-        const hasGroups = inc.assignedGroups && inc.assignedGroups.length > 0;
-        const hasIndividuals = inc.assignedTo && inc.assignedTo.length > 0;
-        if (!hasGroups && !hasIndividuals) return true;
-        const inGroup = hasGroups && userGroups.some(groupId => inc.assignedGroups.includes(groupId));
-        const isIndividual = hasIndividuals && inc.assignedTo.includes(user.uid);
-        if (!inGroup && !isIndividual) return false;
-      }
+      if (!isWithinInterval(incStart, interval)) return false;
+    }
 
-      return true;
-    });
-  }, [incidents, startDate, endDate, selectedLine, selectedMachine, lines, profile, userGroups, user]);
+    if (appliedSelectedTypes.length > 0) {
+      let isMatchingType = false;
+      for (const type of appliedSelectedTypes) {
+         if (type === 'out_of_order' && inc.type === 'out_of_order') { isMatchingType = true; break; }
+         if (type === 'maintenance' && inc.type === 'maintenance') { isMatchingType = true; break; }
+         if (type === 'breakdown' && !inc.type) { isMatchingType = true; break; }
+         if (type === 'stopped' && inc.type === 'line_issue' && inc.lineIssueType !== 'upcoming' && inc.remainingTimeMinutes == null) { isMatchingType = true; break; }
+         if (type === 'upcoming' && inc.type === 'line_issue' && (inc.lineIssueType === 'upcoming' || inc.remainingTimeMinutes != null)) { isMatchingType = true; break; }
+         if (type === 'line_off' && inc.type === 'line_off') { isMatchingType = true; break; }
+      }
+      if (!isMatchingType) return false;
+    }
+    
+    if (appliedSelectedLines.length > 0) {
+      const allowedLineNames = appliedSelectedLines.map(id => lines.find(l => l.id === id)?.name);
+      if (!allowedLineNames.includes(inc.lineName)) return false;
+    }
+    
+    if (appliedSelectedMachines.length > 0 && !appliedSelectedMachines.includes(inc.machineId)) return false;
+    
+    if (appliedSelectedGroups.length > 0 && (!inc.assignedGroups || !inc.assignedGroups.some((g: string) => appliedSelectedGroups.includes(g)))) return false;
+    
+    if (profile?.role !== 'admin' && profile?.role !== 'manager' && user) {
+      if (inc.reportedBy === user.uid) return true;
+      const hasGroups = inc.assignedGroups && inc.assignedGroups.length > 0;
+      const hasIndividuals = inc.assignedTo && inc.assignedTo.length > 0;
+      if (!hasGroups && !hasIndividuals) return true;
+      const inGroup = hasGroups && userGroups.some(groupId => inc.assignedGroups.includes(groupId));
+      const isIndividual = hasIndividuals && inc.assignedTo.includes(user.uid);
+      if (!inGroup && !isIndividual) return false;
+    }
+
+    return true;
+  }, [appliedSelectedLines, appliedSelectedMachines, appliedSelectedGroups, appliedSelectedTypes, lines, profile, userGroups, user]);
+
+  const filteredIncidents = useMemo(() => {
+    const start = startOfDay(new Date(appliedStartDate));
+    const end = endOfDay(new Date(appliedEndDate));
+    return incidents.filter(inc => matchesFilters(inc, { start, end }));
+  }, [incidents, appliedStartDate, appliedEndDate, matchesFilters]);
 
   // Previous period for % change
   const previousPeriodIncidents = useMemo(() => {
-    const currentStart = startOfDay(new Date(startDate));
-    const currentEnd = endOfDay(new Date(endDate));
+    const currentStart = startOfDay(new Date(appliedStartDate));
+    const currentEnd = endOfDay(new Date(appliedEndDate));
     const diffTime = Math.abs(currentEnd.getTime() - currentStart.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
     const prevStart = subDays(currentStart, diffDays);
     const prevEnd = subDays(currentEnd, diffDays);
     
-    return incidents.filter(inc => {
-      if (!inc.startTime) return false;
-      if (inc.type === 'out_of_order') return false; // Exclude out of order incidents
-      
-      const incStart = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
-      if (!isWithinInterval(incStart, { start: prevStart, end: prevEnd })) return false;
-      
-      if (selectedLine !== 'all' && inc.lineName !== lines.find(l => l.id === selectedLine)?.name) return false;
-      if (selectedMachine !== 'all' && inc.machineId !== selectedMachine) return false;
-      
-      if (profile?.role !== 'admin' && profile?.role !== 'manager' && user) {
-        if (inc.reportedBy === user.uid) return true;
-        const hasGroups = inc.assignedGroups && inc.assignedGroups.length > 0;
-        const hasIndividuals = inc.assignedTo && inc.assignedTo.length > 0;
-        if (!hasGroups && !hasIndividuals) return true;
-        const inGroup = hasGroups && userGroups.some(groupId => inc.assignedGroups.includes(groupId));
-        const isIndividual = hasIndividuals && inc.assignedTo.includes(user.uid);
-        if (!inGroup && !isIndividual) return false;
-      }
-
-      return true;
-    });
-  }, [incidents, startDate, endDate, selectedLine, selectedMachine, lines, profile, userGroups, user]);
+    return incidents.filter(inc => matchesFilters(inc, { start: prevStart, end: prevEnd }));
+  }, [incidents, startDate, endDate, matchesFilters]);
 
   // Helper to calculate duration including active incidents
   const getIncidentDuration = React.useCallback((inc: any) => {
     if (inc.durationMinutes != null) return inc.durationMinutes;
     if (!inc.startTime) return 0;
     const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
-    return Math.floor((getServerTime().getTime() - start.getTime()) / 60000);
+    return Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
   }, []);
 
-  // KPIs
-  const totalDowntimeMinutes = filteredIncidents.reduce((acc, inc) => acc + getIncidentDuration(inc), 0);
-  const totalDowntimeHours = (totalDowntimeMinutes / 60).toFixed(1);
-  
-  const prevDowntimeMinutes = previousPeriodIncidents.reduce((acc, inc) => acc + getIncidentDuration(inc), 0);
-  const downtimeChange = prevDowntimeMinutes === 0 ? 0 : ((totalDowntimeMinutes - prevDowntimeMinutes) / prevDowntimeMinutes) * 100;
+  // KPIs (Memoized to prevent unnecessary recalculations on state updates)
+  const totalDowntimeMinutes = useMemo(() => {
+    return filteredIncidents.reduce((acc, inc) => acc + getIncidentDuration(inc), 0);
+  }, [filteredIncidents, getIncidentDuration]);
 
-  const totalEvents = filteredIncidents.length;
+  const totalDowntimeHours = useMemo(() => {
+    return (totalDowntimeMinutes / 60).toFixed(1);
+  }, [totalDowntimeMinutes]);
+  
+  const prevDowntimeMinutes = useMemo(() => {
+    return previousPeriodIncidents.reduce((acc, inc) => acc + getIncidentDuration(inc), 0);
+  }, [previousPeriodIncidents, getIncidentDuration]);
+
+  const downtimeChange = useMemo(() => {
+    return prevDowntimeMinutes === 0 ? 0 : ((totalDowntimeMinutes - prevDowntimeMinutes) / prevDowntimeMinutes) * 100;
+  }, [totalDowntimeMinutes, prevDowntimeMinutes]);
+
+  const totalEvents = useMemo(() => {
+    return filteredIncidents.length;
+  }, [filteredIncidents]);
   
   // Availability = (Planned Production Time - Downtime) / Planned Production Time
   const totalHours = useMemo(() => {
     let hours = 0;
-    const start = startOfDay(new Date(startDate));
-    const end = endOfDay(new Date(endDate));
+    const start = startOfDay(new Date(appliedStartDate));
+    const end = endOfDay(new Date(appliedEndDate));
     
     // Create a map for quick lookup: "YYYY-MM-DD_lineId" -> hours
     const hoursMap = new Map<string, number>();
@@ -193,7 +245,7 @@ export function Analysis() {
     const diffTime = Math.abs(end.getTime() - start.getTime());
     const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 1;
     
-    const linesToProcess = selectedLine === 'all' ? lines : lines.filter(l => l.id === selectedLine);
+    const linesToProcess = appliedSelectedLines.length === 0 ? lines : lines.filter(l => appliedSelectedLines.includes(l.id));
     
     if (linesToProcess.length === 0) {
       return days * 9; // Fallback if no lines exist
@@ -212,7 +264,7 @@ export function Analysis() {
     }
     
     return hours;
-  }, [productionHoursData, startDate, endDate, selectedLine, lines]);
+  }, [productionHoursData, appliedStartDate, appliedEndDate, appliedSelectedLines, lines]);
 
   const effectiveDowntimeHours = useMemo(() => {
     const effectiveMins = filteredIncidents.reduce((acc, inc) => {
@@ -228,22 +280,26 @@ export function Analysis() {
     return effectiveMins / 60;
   }, [filteredIncidents, getIncidentDuration]);
 
-  const availability = totalHours > 0 
-    ? Math.max(0, ((totalHours - effectiveDowntimeHours) / totalHours) * 100).toFixed(1)
-    : '0.0';
+  const availability = useMemo(() => {
+    return totalHours > 0 
+      ? Math.max(0, ((totalHours - effectiveDowntimeHours) / totalHours) * 100).toFixed(1)
+      : '0.0';
+  }, [totalHours, effectiveDowntimeHours]);
 
-  const mttr = totalEvents > 0 ? (totalDowntimeMinutes / totalEvents).toFixed(1) : '0';
+  const mttr = useMemo(() => {
+    return totalEvents > 0 ? (totalDowntimeMinutes / totalEvents).toFixed(1) : '0';
+  }, [totalDowntimeMinutes, totalEvents]);
   
   const mtbf = useMemo(() => {
     let totalDailyMtbf = 0;
     let daysWithProduction = 0;
 
-    const start = startOfDay(new Date(startDate));
-    const end = endOfDay(new Date(endDate));
+    const start = startOfDay(new Date(appliedStartDate));
+    const end = endOfDay(new Date(appliedEndDate));
     const diffTime = Math.abs(end.getTime() - start.getTime());
     const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 1;
     
-    const linesToProcess = selectedLine === 'all' ? lines : lines.filter(l => l.id === selectedLine);
+    const linesToProcess = appliedSelectedLines.length === 0 ? lines : lines.filter(l => appliedSelectedLines.includes(l.id));
     
     const hoursMap = new Map<string, number>();
     productionHoursData.forEach(ph => {
@@ -279,12 +335,14 @@ export function Analysis() {
     }
     
     return daysWithProduction > 0 ? (totalDailyMtbf / daysWithProduction).toFixed(1) : '0';
-  }, [filteredIncidents, startDate, endDate, selectedLine, lines, productionHoursData]);
+  }, [filteredIncidents, appliedStartDate, appliedEndDate, appliedSelectedLines, lines, productionHoursData]);
 
-  // All Issues (Sorted by duration)
-  const allIssues = [...filteredIncidents]
-    .filter(i => getIncidentDuration(i) > 0)
-    .sort((a, b) => getIncidentDuration(b) - getIncidentDuration(a));
+  // All Issues (Sorted by duration, wrapped in useMemo to prevent sorting of entries on every render)
+  const allIssues = useMemo(() => {
+    return [...filteredIncidents]
+      .filter(i => getIncidentDuration(i) > 0)
+      .sort((a, b) => getIncidentDuration(b) - getIncidentDuration(a));
+  }, [filteredIncidents, getIncidentDuration]);
 
   // Trend Data
   const trendData = useMemo(() => {
@@ -376,7 +434,7 @@ export function Analysis() {
       data[hour].duration += getIncidentDuration(inc);
     });
     return data;
-  }, [filteredIncidents]);
+  }, [filteredIncidents, getIncidentDuration]);
 
   // Pareto Data (Local calculation based on reasonCode)
   const paretoData = useMemo(() => {
@@ -403,7 +461,117 @@ export function Analysis() {
         cumulativePercentage: totalDuration > 0 ? (cumulative / totalDuration) * 100 : 0
       };
     });
-  }, [filteredIncidents]);
+  }, [filteredIncidents, getIncidentDuration]);
+
+  // Team Performance Data
+  const teamPerformanceData = useMemo(() => {
+    const teamStats: { [groupId: string]: { totalDuration: number, events: number } } = {};
+    
+    groups.forEach(g => {
+      teamStats[g.id] = { totalDuration: 0, events: 0 };
+    });
+
+    filteredIncidents.forEach(inc => {
+      const duration = getIncidentDuration(inc);
+      if (inc.assignedGroups && inc.assignedGroups.length > 0) {
+        inc.assignedGroups.forEach((groupId: string) => {
+          if (teamStats[groupId]) {
+            teamStats[groupId].totalDuration += duration;
+            teamStats[groupId].events += 1;
+          }
+        });
+      }
+    });
+
+    return groups.map(g => {
+      const stats = teamStats[g.id];
+      const durationMinutes = stats.totalDuration || 0;
+      const events = stats.events || 0;
+      
+      let val = 0;
+      if (teamPerformanceMetric === 'days') {
+        val = durationMinutes / 1440;
+      } else if (teamPerformanceMetric === 'hours') {
+        val = durationMinutes / 60;
+      } else if (teamPerformanceMetric === 'minutes') {
+        val = durationMinutes;
+      } else if (teamPerformanceMetric === 'events') {
+        val = events;
+      }
+
+      return {
+        name: g.name,
+        value: Number(val.toFixed(1)),
+        durationMinutes,
+        events,
+      };
+    }).filter(g => g.durationMinutes > 0 || g.events > 0).sort((a, b) => b.value - a.value);
+  }, [filteredIncidents, groups, getIncidentDuration, teamPerformanceMetric]);
+
+  const incidentTypesData = useMemo(() => {
+    const start = startOfDay(new Date(appliedStartDate));
+    const end = endOfDay(new Date(appliedEndDate));
+    
+    // Filter incidents matching current filters but WITHOUT excluding out_of_order
+    const allMatchingIncidents = incidents.filter(inc => matchesFilters(inc, { start, end }));
+
+    let outOfOrderDuration = 0;
+    let upcomingIssueDuration = 0;
+    let lineStoppedDuration = 0;
+    let breakdownDuration = 0;
+    let maintenanceDuration = 0;
+
+    let outOfOrderEvents = 0;
+    let upcomingIssueEvents = 0;
+    let lineStoppedEvents = 0;
+    let breakdownEvents = 0;
+    let maintenanceEvents = 0;
+
+    allMatchingIncidents.forEach(inc => {
+      const duration = getIncidentDuration(inc);
+
+      if (inc.type === 'out_of_order') {
+        outOfOrderDuration += duration;
+        outOfOrderEvents++;
+      } else if (inc.type === 'line_issue') {
+        if (inc.lineIssueType === 'upcoming' || inc.remainingTimeMinutes != null) {
+          upcomingIssueDuration += duration;
+          upcomingIssueEvents++;
+        } else {
+          lineStoppedDuration += duration;
+          lineStoppedEvents++;
+        }
+      } else if (inc.type === 'maintenance') {
+        maintenanceDuration += duration;
+        maintenanceEvents++;
+      } else {
+        breakdownDuration += duration;
+        breakdownEvents++;
+      }
+    });
+
+    const getValue = (duration: number, events: number) => {
+      if (incidentTypesMetric === 'days') return Number((duration / 1440).toFixed(1));
+      if (incidentTypesMetric === 'hours') return Number((duration / 60).toFixed(1));
+      if (incidentTypesMetric === 'minutes') return Number(duration.toFixed(1));
+      return events;
+    };
+
+    const outOfOrderVal = getValue(outOfOrderDuration, outOfOrderEvents);
+    const upcomingIssueVal = getValue(upcomingIssueDuration, upcomingIssueEvents);
+    const lineStoppedVal = getValue(lineStoppedDuration, lineStoppedEvents);
+    const breakdownVal = getValue(breakdownDuration, breakdownEvents);
+    const maintenanceVal = getValue(maintenanceDuration, maintenanceEvents);
+
+    const data = [];
+    if (outOfOrderVal > 0) data.push({ name: 'Out of Order', value: outOfOrderVal, color: '#f59e0b' });
+    if (upcomingIssueVal > 0) data.push({ name: 'Upcoming Issue', value: upcomingIssueVal, color: '#fde047' });
+    if (lineStoppedVal > 0) data.push({ name: 'Line Stopped', value: lineStoppedVal, color: '#ef4444' });
+    if (breakdownVal > 0) data.push({ name: 'Breakdown', value: breakdownVal, color: '#ef4444' });
+    if (maintenanceVal > 0) data.push({ name: 'Maintenance', value: maintenanceVal, color: '#3b82f6' });
+
+    return data;
+  }, [incidents, appliedStartDate, appliedEndDate, matchesFilters, getIncidentDuration, incidentTypesMetric]);
 
   return (
     <div className="space-y-6">
@@ -441,27 +609,54 @@ export function Analysis() {
             </div>
           </div>
           
-          <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
-            <select 
-              value={selectedLine}
-              onChange={e => { setSelectedLine(e.target.value); setSelectedMachine('all'); }}
-              className="p-2 border border-gray-300 rounded-lg text-sm flex-grow sm:flex-none sm:w-40"
-            >
-              <option value="all">All Lines</option>
-              {lines.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
+          <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto z-50">
+            <MultiSelect
+              options={lines.map(l => ({ value: l.id, label: l.name }))}
+              selectedValues={selectedLines}
+              onChange={vals => { setSelectedLines(vals); setSelectedMachines([]); }}
+              placeholder="All Lines"
+              className="flex-grow sm:flex-none sm:w-40"
+            />
 
-            <select 
-              value={selectedMachine}
-              onChange={e => setSelectedMachine(e.target.value)}
-              className="p-2 border border-gray-300 rounded-lg text-sm flex-grow sm:flex-none sm:w-40"
-              disabled={selectedLine === 'all'}
+            <MultiSelect
+              options={machines
+                .filter(m => selectedLines.length === 0 || selectedLines.includes(m.lineId))
+                .map(m => ({ value: m.id, label: m.name }))}
+              selectedValues={selectedMachines}
+              onChange={setSelectedMachines}
+              placeholder="All Machines"
+              className="flex-grow sm:flex-none sm:w-40"
+            />
+
+            <MultiSelect
+              options={groups.map(g => ({ value: g.id, label: g.name }))}
+              selectedValues={selectedGroups}
+              onChange={setSelectedGroups}
+              placeholder="All Teams"
+              className="flex-grow sm:flex-none sm:w-40"
+            />
+
+            <MultiSelect
+              options={[
+                { value: 'breakdown', label: 'Breakdown' },
+                { value: 'out_of_order', label: 'Out of Order' },
+                { value: 'upcoming', label: 'Upcoming Issue' },
+                { value: 'stopped', label: 'Line Stopped' },
+                { value: 'line_off', label: 'Line Off' },
+                { value: 'maintenance', label: 'Maintenance' },
+              ]}
+              selectedValues={selectedTypes}
+              onChange={setSelectedTypes}
+              placeholder="All Types"
+              className="flex-grow sm:flex-none sm:w-40"
+            />
+            
+            <button
+              onClick={handleApplyFilters}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg whitespace-nowrap shadow-sm transition-colors"
             >
-              <option value="all">All Machines</option>
-              {machines.filter(m => m.lineId === selectedLine).map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
+              Apply Filter
+            </button>
           </div>
 
           {(profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'pd_engineer') && (
@@ -512,94 +707,98 @@ export function Analysis() {
       </div>
 
       {/* Filtered Dashboard Visual */}
-      {selectedLine !== 'all' && (
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
-          <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
-            Line Overview
-            <div className="group relative">
-              <Info size={16} className="text-gray-400 cursor-help" />
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg z-10 font-normal">
-                Visual representation of the line for the selected period. Red indicates breakdowns occurred.
+      {appliedSelectedLines.length > 0 && appliedSelectedLines.map(lineId => {
+        const line = lines.find(l => l.id === lineId);
+        if (!line) return null;
+        return (
+          <div key={line.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+            <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+              {line.name} Overview
+              <div className="group relative">
+                <Info size={16} className="text-gray-400 cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg z-10 font-normal">
+                  Visual representation of the line for the selected period. Red indicates breakdowns occurred.
+                </div>
               </div>
-            </div>
-          </h3>
-          
-          <div className="flex flex-wrap gap-4 items-start min-w-max pb-4">
-            {machines
-              .filter(m => m.lineId === selectedLine)
-              .filter(m => selectedMachine === 'all' || m.id === selectedMachine)
-              .sort((a: any, b: any) => {
-                const orderA = a.order !== undefined ? a.order : 0;
-                const orderB = b.order !== undefined ? b.order : 0;
-                if (orderA !== orderB) return orderA - orderB;
-                return (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0);
-              })
-              .map((machine, index) => {
-                // Calculate metrics for this machine in the filtered period
-                const machineIncidents = filteredIncidents.filter(inc => inc.machineId === machine.id);
-                const totalStoppageEvents = machineIncidents.length;
-                const totalStoppageMinutes = machineIncidents.reduce((sum, inc) => sum + getIncidentDuration(inc), 0);
-                
-                // Calculate breakdown percentage
-                // Total available minutes = totalHours * 60
-                const availableMinutes = totalHours * 60;
-                const breakdownPercentage = availableMinutes > 0 
-                  ? ((totalStoppageMinutes / availableMinutes) * 100).toFixed(1) 
-                  : '0.0';
+            </h3>
+            
+            <div className="flex flex-wrap gap-4 items-start min-w-max pb-4">
+              {machines
+                .filter(m => m.lineId === line.id)
+                .filter(m => appliedSelectedMachines.length === 0 || appliedSelectedMachines.includes(m.id))
+                .sort((a: any, b: any) => {
+                  const orderA = a.order !== undefined ? a.order : 0;
+                  const orderB = b.order !== undefined ? b.order : 0;
+                  if (orderA !== orderB) return orderA - orderB;
+                  return (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0);
+                })
+                .map((machine, index) => {
+                  // Calculate metrics for this machine in the filtered period
+                  const machineIncidents = filteredIncidents.filter(inc => inc.machineId === machine.id);
+                  const totalStoppageEvents = machineIncidents.length;
+                  const totalStoppageMinutes = machineIncidents.reduce((sum, inc) => sum + getIncidentDuration(inc), 0);
                   
-                const hasBreakdown = totalStoppageEvents > 0;
-
-                return (
-                  <div key={machine.id} className="flex items-center">
-                    {/* Connector line */}
-                    {index > 0 && selectedMachine === 'all' && (
-                      <div className="flex flex-col items-center justify-center relative mx-1 w-8 h-12 mt-[-40px]">
-                        <div className="w-full h-1 bg-gray-200 rounded-full"></div>
-                      </div>
-                    )}
+                  // Calculate breakdown percentage
+                  // Total available minutes = totalHours * 60
+                  const availableMinutes = totalHours * 60;
+                  const breakdownPercentage = availableMinutes > 0 
+                    ? ((totalStoppageMinutes / availableMinutes) * 100).toFixed(1) 
+                    : '0.0';
                     
-                    <div className="flex flex-col items-center group relative">
-                      <div 
-                        className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-md transition-transform transform hover:scale-105 relative ${
-                          hasBreakdown ? 'bg-red-500' : 'bg-green-500'
-                        }`}
-                      >
-                        <span className="text-xs font-bold truncate px-1">{machine.name.substring(0, 4)}</span>
-                      </div>
+                  const hasBreakdown = totalStoppageEvents > 0;
+
+                  return (
+                    <div key={machine.id} className="flex items-center">
+                      {/* Connector line */}
+                      {index > 0 && appliedSelectedMachines.length === 0 && (
+                        <div className="flex flex-col items-center justify-center relative mx-1 w-8 h-12 mt-[-40px]">
+                          <div className="w-full h-1 bg-gray-200 rounded-full"></div>
+                        </div>
+                      )}
                       
-                      {/* Tooltip for full name */}
-                      <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 text-white text-xs rounded py-1 px-2 whitespace-nowrap z-10 pointer-events-none">
-                        {machine.name}
-                      </div>
-                      
-                      {/* Metrics below the circle */}
-                      <div className="flex flex-col items-center mt-3 bg-gray-50 rounded-lg p-2 border border-gray-200 min-w-[90px] shadow-sm">
-                        <div className="flex flex-col w-full gap-1.5">
-                          <div className="flex justify-between items-center text-[10px]">
-                            <span className="text-gray-500">Events:</span>
-                            <span className="font-bold text-gray-800">{totalStoppageEvents}</span>
-                          </div>
-                          <div className="flex justify-between items-center text-[10px]">
-                            <span className="text-gray-500">Mins:</span>
-                            <span className={`font-bold ${totalStoppageMinutes > 0 ? 'text-red-600' : 'text-gray-800'}`}>{totalStoppageMinutes}</span>
-                          </div>
-                          <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-gray-200">
-                            <span className="text-gray-500">Down:</span>
-                            <span className={`font-bold ${parseFloat(breakdownPercentage) > 0 ? 'text-orange-600' : 'text-green-600'}`}>{breakdownPercentage}%</span>
+                      <div className="flex flex-col items-center group relative">
+                        <div 
+                          className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-md transition-transform transform hover:scale-105 relative ${
+                            hasBreakdown ? 'bg-red-500' : 'bg-green-500'
+                          }`}
+                        >
+                          <span className="text-xs font-bold truncate px-1">{machine.name.substring(0, 4)}</span>
+                        </div>
+                        
+                        {/* Tooltip for full name */}
+                        <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 text-white text-xs rounded py-1 px-2 whitespace-nowrap z-10 pointer-events-none">
+                          {machine.name}
+                        </div>
+                        
+                        {/* Metrics below the circle */}
+                        <div className="flex flex-col items-center mt-3 bg-gray-50 rounded-lg p-2 border border-gray-200 min-w-[90px] shadow-sm">
+                          <div className="flex flex-col w-full gap-1.5">
+                            <div className="flex justify-between items-center text-[10px]">
+                              <span className="text-gray-500">Events:</span>
+                              <span className="font-bold text-gray-800">{totalStoppageEvents}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[10px]">
+                              <span className="text-gray-500">Mins:</span>
+                              <span className={`font-bold ${totalStoppageMinutes > 0 ? 'text-red-600' : 'text-gray-800'}`}>{totalStoppageMinutes}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-gray-200">
+                              <span className="text-gray-500">Down:</span>
+                              <span className={`font-bold ${parseFloat(breakdownPercentage) > 0 ? 'text-orange-600' : 'text-green-600'}`}>{breakdownPercentage}%</span>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-              
-            {machines.filter(m => m.lineId === selectedLine).length === 0 && (
-              <div className="text-gray-500 italic text-sm py-4">No machines found for this line.</div>
-            )}
+                  );
+                })}
+                
+              {machines.filter(m => m.lineId === line.id).length === 0 && (
+                <div className="text-gray-500 italic text-sm py-4">No machines found for this line.</div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Pareto Chart */}
@@ -829,6 +1028,163 @@ export function Analysis() {
             </ResponsiveContainer>
           </div>
         </div>
+
+        {/* Team Performance */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+              Team Performance
+              <div className="group relative">
+                <Info size={16} className="text-gray-400 cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg z-10 font-normal">
+                  Downtime performance metrics distribution categorized by responsible teams.
+                </div>
+              </div>
+            </h3>
+            <div className="flex bg-gray-100 p-1 rounded-lg w-full sm:w-auto overflow-x-auto justify-between sm:justify-start gap-1">
+              <button
+                onClick={() => setTeamPerformanceMetric('days')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${teamPerformanceMetric === 'days' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Days
+              </button>
+              <button
+                onClick={() => setTeamPerformanceMetric('hours')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${teamPerformanceMetric === 'hours' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Hours
+              </button>
+              <button
+                onClick={() => setTeamPerformanceMetric('minutes')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${teamPerformanceMetric === 'minutes' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Minutes
+              </button>
+              <button
+                onClick={() => setTeamPerformanceMetric('events')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${teamPerformanceMetric === 'events' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Events
+              </button>
+            </div>
+          </div>
+          <div className="h-80 flex items-center justify-center">
+            {teamPerformanceData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={teamPerformanceData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={90}
+                    paddingAngle={2}
+                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                  >
+                    {teamPerformanceData.map((_entry, index) => {
+                      const PIE_COLORS = ['#3bb9ff', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f43f5e', '#14b8a6'];
+                      return (
+                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                      );
+                    })}
+                  </Pie>
+                  <RechartsTooltip 
+                    formatter={(val: any) => {
+                      let unit = '';
+                      if (teamPerformanceMetric === 'days') unit = ' Days';
+                      else if (teamPerformanceMetric === 'hours') unit = ' Hours';
+                      else if (teamPerformanceMetric === 'minutes') unit = ' Mins';
+                      else if (teamPerformanceMetric === 'events') unit = ' Events';
+                      return [`${val}${unit}`, 'Value'];
+                    }}
+                  />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <span className="text-gray-400 text-sm">No team performance data available</span>
+            )}
+          </div>
+        </div>
+
+        {/* Incident Types */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+              Incident Types
+              <div className="group relative">
+                <Info size={16} className="text-gray-400 cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg z-10 font-normal">
+                  Distribution of total captured incidents by their reported type constraint.
+                </div>
+              </div>
+            </h3>
+            <div className="flex bg-gray-100 p-1 rounded-lg w-full sm:w-auto overflow-x-auto justify-between sm:justify-start gap-1">
+              <button
+                onClick={() => setIncidentTypesMetric('days')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${incidentTypesMetric === 'days' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Days
+              </button>
+              <button
+                onClick={() => setIncidentTypesMetric('hours')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${incidentTypesMetric === 'hours' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Hours
+              </button>
+              <button
+                onClick={() => setIncidentTypesMetric('minutes')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${incidentTypesMetric === 'minutes' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Minutes
+              </button>
+              <button
+                onClick={() => setIncidentTypesMetric('events')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors flex-grow sm:flex-grow-0 ${incidentTypesMetric === 'events' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Events
+              </button>
+            </div>
+          </div>
+          <div className="h-80 flex items-center justify-center">
+            {incidentTypesData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={incidentTypesData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={90}
+                    paddingAngle={2}
+                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                  >
+                    {incidentTypesData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip 
+                    formatter={(val: any) => {
+                      let unit = '';
+                      if (incidentTypesMetric === 'days') unit = ' Days';
+                      else if (incidentTypesMetric === 'hours') unit = ' Hours';
+                      else if (incidentTypesMetric === 'minutes') unit = ' Mins';
+                      else if (incidentTypesMetric === 'events') unit = ' Events';
+                      return [`${val}${unit}`, 'Value'];
+                    }}
+                  />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <span className="text-gray-400 text-sm">No incident types data available</span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* All Issues Table */}
@@ -850,6 +1206,7 @@ export function Analysis() {
               <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
                 <th className="p-4 font-medium">Machine</th>
                 <th className="p-4 font-medium">Line</th>
+                <th className="p-4 font-medium">Type</th>
                 <th className="p-4 font-medium">Date</th>
                 <th className="p-4 font-medium">Duration</th>
                 <th className="p-4 font-medium">Stopped Jigs</th>
@@ -861,13 +1218,26 @@ export function Analysis() {
             <tbody className="divide-y divide-gray-100">
               {allIssues.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-gray-500">No downtime events found.</td>
+                  <td colSpan={9} className="p-8 text-center text-gray-500">No downtime events found.</td>
                 </tr>
               ) : (
                 allIssues.map(inc => (
                   <tr key={inc.id} className="hover:bg-gray-50">
                     <td className="p-4 font-medium text-gray-800">{inc.machineName}</td>
                     <td className="p-4 text-gray-600">{inc.lineName}</td>
+                    <td className="p-4 text-gray-600">
+                      {inc.type === 'out_of_order' ? (
+                        <span className="inline-block px-2 py-1 bg-amber-100 text-amber-800 rounded font-medium text-xs whitespace-nowrap">Out of Order</span>
+                      ) : inc.type === 'line_issue' ? (
+                        <span className={`inline-block px-2 py-1 rounded font-medium text-xs whitespace-nowrap ${inc.lineIssueType === 'upcoming' || inc.remainingTimeMinutes != null ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>
+                          {inc.lineIssueType === 'upcoming' || inc.remainingTimeMinutes != null ? 'Upcoming Issue' : 'Line Stopped'}
+                        </span>
+                      ) : inc.type === 'maintenance' ? (
+                        <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 rounded font-medium text-xs whitespace-nowrap">Maintenance</span>
+                      ) : (
+                        <span className="inline-block px-2 py-1 bg-red-100 text-red-800 rounded font-medium text-xs whitespace-nowrap">Breakdown</span>
+                      )}
+                    </td>
                     <td className="p-4 text-gray-600">
                       {inc.startTime ? format(inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime), 'MMM d, HH:mm') : 'N/A'}
                     </td>

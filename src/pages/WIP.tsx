@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, writeBatch, getDocs, where } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, writeBatch, getDocs, where, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Wrench, Save, Clock, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
@@ -121,7 +121,7 @@ export function WIP() {
     });
 
     // Fetch WIP Snapshots
-    const qSnapshots = query(collection(db, 'wip_snapshots'), orderBy('createdAt', 'desc'));
+    const qSnapshots = query(collection(db, 'wip_snapshots'), orderBy('createdAt', 'desc'), limit(200));
     const unsubSnapshots = onSnapshot(qSnapshots, (snapshot) => {
       const allSnapshots = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WipSnapshot));
       const grouped = allSnapshots.reduce((acc, s) => {

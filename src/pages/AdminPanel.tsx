@@ -49,6 +49,12 @@ export function AdminPanel() {
     { value: 'cyan', label: 'Cyan' },
   ];
   
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editGroupName, setEditGroupName] = useState('');
+  
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [editRoleName, setEditRoleName] = useState('');
+  
   const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
   const [editingMachineName, setEditingMachineName] = useState('');
 
@@ -59,6 +65,7 @@ export function AdminPanel() {
   const [inviteRole, setInviteRole] = useState('pending');
   const [isInviting, setIsInviting] = useState(false);
   const [userToDelete, setUserToDelete] = useState<{id: string, email: string, isInvitation?: boolean} | null>(null);
+  const [roleToDelete, setRoleToDelete] = useState<string | null>(null);
 
   const [permissions, setPermissions] = useState<any>({});
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
@@ -68,6 +75,7 @@ export function AdminPanel() {
   const availablePages = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'report', label: 'Report Breakdown' },
+    { id: 'line_breakdown_report', label: 'Report Line Issue' },
     { id: 'incidents', label: 'Active Incidents' },
     { id: 'wip', label: 'WIP' },
     { id: 'evaluation', label: 'Evaluation' },
@@ -77,7 +85,8 @@ export function AdminPanel() {
     { id: 'profile', label: 'Profile' }
   ];
 
-  const roles = ['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer'];
+  const [roles, setRoles] = useState<string[]>(['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer']);
+  const [newRoleName, setNewRoleName] = useState('');
 
   useEffect(() => {
     if (profile?.role !== 'admin') return;
@@ -90,18 +99,25 @@ export function AdminPanel() {
         }
         
         const permSnap = await getDoc(doc(db, 'settings', 'permissions'));
+        let perms: any = {};
         if (permSnap.exists()) {
-          setPermissions(permSnap.data());
+          perms = permSnap.data();
+          setPermissions(perms);
         } else {
           // Default permissions
-          setPermissions({
-            admin: ['dashboard', 'report', 'incidents', 'wip', 'analysis', 'reports', 'admin', 'profile'],
-            manager: ['dashboard', 'incidents', 'wip', 'analysis', 'reports', 'profile'],
-            pd_engineer: ['dashboard', 'report', 'incidents', 'wip', 'analysis', 'reports', 'profile'],
-            line_leader: ['dashboard', 'report', 'incidents', 'wip', 'profile'],
+          perms = {
+            admin: ['dashboard', 'report', 'line_breakdown_report', 'incidents', 'wip', 'analysis', 'reports', 'admin', 'profile', 'evaluation'],
+            manager: ['dashboard', 'incidents', 'wip', 'analysis', 'reports', 'profile', 'evaluation'],
+            pd_engineer: ['dashboard', 'report', 'line_breakdown_report', 'incidents', 'wip', 'analysis', 'reports', 'profile', 'evaluation'],
+            line_leader: ['dashboard', 'report', 'incidents', 'wip', 'profile', 'evaluation'],
             maintenance_engineer: ['dashboard', 'incidents', 'wip', 'profile']
-          });
+          };
+          setPermissions(perms);
         }
+
+        const defaultRoles = ['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer'];
+        const allRoles = Array.from(new Set([...defaultRoles, ...Object.keys(perms).filter(k => k !== 'pending')]));
+        setRoles(allRoles);
       } catch (err) {
         console.error('Error fetching settings:', err);
       }
@@ -137,14 +153,28 @@ export function AdminPanel() {
       setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    const qGroups = query(collection(db, 'groups'), orderBy('name', 'asc'));
+    const qGroups = query(collection(db, 'groups'));
     const unsubGroups = onSnapshot(qGroups, (snapshot) => {
-      setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const sorted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      sorted.sort((a: any, b: any) => {
+        const orderA = a.order !== undefined ? a.order : 0;
+        const orderB = b.order !== undefined ? b.order : 0;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      setGroups(sorted);
     });
 
-    const qReasonCodes = query(collection(db, 'reasonCodes'), orderBy('code', 'asc'));
+    const qReasonCodes = query(collection(db, 'reasonCodes'));
     const unsubReasonCodes = onSnapshot(qReasonCodes, (snapshot) => {
-      setReasonCodes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const sorted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      sorted.sort((a: any, b: any) => {
+        const orderA = a.order !== undefined ? a.order : 0;
+        const orderB = b.order !== undefined ? b.order : 0;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.code || '').localeCompare(b.code || '');
+      });
+      setReasonCodes(sorted);
     });
 
     const qInvitations = query(collection(db, 'invitations'), orderBy('createdAt', 'desc'));
@@ -152,9 +182,16 @@ export function AdminPanel() {
       setInvitations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isInvitation: true })));
     });
 
-    const qCauses = query(collection(db, 'evaluationCauses'), orderBy('createdAt', 'asc'));
+    const qCauses = query(collection(db, 'evaluationCauses'));
     const unsubCauses = onSnapshot(qCauses, (snapshot) => {
-      setEvaluationCauses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const sorted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      sorted.sort((a: any, b: any) => {
+        const orderA = a.order !== undefined ? a.order : 0;
+        const orderB = b.order !== undefined ? b.order : 0;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0);
+      });
+      setEvaluationCauses(sorted);
     });
 
     return () => {
@@ -307,9 +344,11 @@ export function AdminPanel() {
     e.preventDefault();
     if (!newGroupName) return;
     try {
+      const nextOrder = groups.length > 0 ? Math.max(...groups.map(g => g.order || 0)) + 1 : 0;
       await addDoc(collection(db, 'groups'), {
         name: newGroupName,
         userIds: newGroupUsers,
+        order: nextOrder,
         createdAt: serverTimestamp(),
       });
       setNewGroupName('');
@@ -328,9 +367,11 @@ export function AdminPanel() {
     e.preventDefault();
     if (!newReasonCode || !newReasonDescription) return;
     try {
+      const nextOrder = reasonCodes.length > 0 ? Math.max(...reasonCodes.map(rc => rc.order || 0)) + 1 : 0;
       await addDoc(collection(db, 'reasonCodes'), {
         code: newReasonCode,
         description: newReasonDescription,
+        order: nextOrder,
         createdAt: serverTimestamp(),
       });
       setNewReasonCode('');
@@ -349,8 +390,10 @@ export function AdminPanel() {
     e.preventDefault();
     if (!newCauseName) return;
     try {
+      const nextOrder = evaluationCauses.length > 0 ? Math.max(...evaluationCauses.map(ec => ec.order || 0)) + 1 : 0;
       await addDoc(collection(db, 'evaluationCauses'), {
         name: newCauseName,
+        order: nextOrder,
         createdAt: serverTimestamp(),
       });
       setNewCauseName('');
@@ -381,6 +424,66 @@ export function AdminPanel() {
     } catch (error) {
       console.error('Error updating line order:', error);
       setErrorMsg('Failed to update line order.');
+    }
+  };
+
+  const handleDragEndGroups = async (result: any) => {
+    if (!result.destination) return;
+    
+    const items = Array.from(groups);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+    
+    setGroups(items);
+    
+    try {
+      const promises = items.map((item, index) => 
+        updateDoc(doc(db, 'groups', item.id), { order: index })
+      );
+      await Promise.all(promises);
+    } catch (error) {
+      console.error('Error updating group order:', error);
+      setErrorMsg('Failed to update team order.');
+    }
+  };
+
+  const handleDragEndReasonCodes = async (result: any) => {
+    if (!result.destination) return;
+    
+    const items = Array.from(reasonCodes);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+    
+    setReasonCodes(items);
+    
+    try {
+      const promises = items.map((item, index) => 
+        updateDoc(doc(db, 'reasonCodes', item.id), { order: index })
+      );
+      await Promise.all(promises);
+    } catch (error) {
+      console.error('Error updating reason code order:', error);
+      setErrorMsg('Failed to update reason code order.');
+    }
+  };
+
+  const handleDragEndEvaluationCauses = async (result: any) => {
+    if (!result.destination) return;
+    
+    const items = Array.from(evaluationCauses);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+    
+    setEvaluationCauses(items);
+    
+    try {
+      const promises = items.map((item, index) => 
+        updateDoc(doc(db, 'evaluationCauses', item.id), { order: index })
+      );
+      await Promise.all(promises);
+    } catch (error) {
+      console.error('Error updating evaluation cause order:', error);
+      setErrorMsg('Failed to update evaluation cause order.');
     }
   };
 
@@ -557,6 +660,51 @@ export function AdminPanel() {
     });
   };
 
+  const handleAddRole = (e: React.FormEvent) => {
+    e.preventDefault();
+    const sanitized = newRoleName.trim().toLowerCase().replace(/\s+/g, '_');
+    if (!sanitized) return;
+    if (roles.includes(sanitized) || sanitized === 'pending') {
+      setErrorMsg('Role already exists.');
+      return;
+    }
+    
+    // Add to local state first
+    setRoles(prev => [...prev, sanitized]);
+    setPermissions(prev => ({
+      ...prev,
+      [sanitized]: ['dashboard', 'profile'] // Standard default permissions
+    }));
+    setNewRoleName('');
+  };
+
+  const confirmDeleteRole = (role: string) => {
+    const defaultRoles = ['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer'];
+    if (defaultRoles.includes(role)) {
+      setErrorMsg('Standard system roles cannot be deleted.');
+      return;
+    }
+    setRoleToDelete(role);
+  };
+
+  const handleDeleteRoleSubmit = async () => {
+    if (!roleToDelete) return;
+    
+    try {
+      const updatedPerms = { ...permissions };
+      delete updatedPerms[roleToDelete];
+      
+      await setDoc(doc(db, 'settings', 'permissions'), updatedPerms);
+      
+      setPermissions(updatedPerms);
+      setRoles(prev => prev.filter(r => r !== roleToDelete));
+      setRoleToDelete(null);
+    } catch (err) {
+      console.error('Error deleting custom role:', err);
+      setErrorMsg('Failed to delete custom role.');
+    }
+  };
+
   if (profile?.role !== 'admin') {
     return <div className="p-8 text-center text-red-600 font-bold">Access Denied. Admins only.</div>;
   }
@@ -570,28 +718,50 @@ export function AdminPanel() {
     return timeB - timeA;
   });
 
+  const handleGlobalDragEnd = (result: DropResult) => {
+    if (!result.destination) return;
+    const sourceId = result.source.droppableId;
+    if (sourceId === 'lines-list') {
+      return handleDragEndLines(result);
+    }
+    if (sourceId === 'groups-list') {
+      return handleDragEndGroups(result);
+    }
+    if (sourceId === 'reason-codes-list') {
+      return handleDragEndReasonCodes(result);
+    }
+    if (sourceId === 'evaluation-causes-list') {
+      return handleDragEndEvaluationCauses(result);
+    }
+    return handleDragEnd(result);
+  };
+
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-gray-100 text-gray-800 rounded-full">
-            <Settings size={24} />
+    <DragDropContext onDragEnd={handleGlobalDragEnd}>
+      <div className="space-y-10">
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+          <div className="flex items-center gap-4">
+            <div className="p-3.5 bg-gray-100 text-gray-800 rounded-2xl shadow-sm">
+              <Settings size={28} />
+            </div>
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">Admin Panel</h2>
+              <p className="text-sm text-gray-500 mt-1">Manage system configurations, teams, and users</p>
+            </div>
           </div>
-          <h2 className="text-2xl font-bold text-gray-800">Admin Panel</h2>
+          <button
+            onClick={() => setIsProductionHoursModalOpen(true)}
+            className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
+          >
+            <Clock size={20} />
+            Manage Production Hours
+          </button>
         </div>
-        <button
-          onClick={() => setIsProductionHoursModalOpen(true)}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2"
-        >
-          <Clock size={18} />
-          Manage Production Hours
-        </button>
-      </div>
 
       <div className="grid grid-cols-1 gap-8">
         {/* Manage Lines */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Production Lines</h3>
+        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+          <h3 className="text-xl font-bold text-gray-900 mb-6 border-b border-gray-200 pb-4">Production Lines</h3>
           
           <form onSubmit={handleAddLine} className="flex flex-col gap-3 mb-6">
             <div className="flex gap-2">
@@ -627,8 +797,7 @@ export function AdminPanel() {
             </label>
           </form>
 
-          <DragDropContext onDragEnd={handleDragEndLines}>
-            <Droppable droppableId="lines-list">
+          <Droppable droppableId="lines-list">
               {(provided) => (
                 <ul 
                   className="space-y-2 max-h-64 overflow-y-auto"
@@ -725,12 +894,11 @@ export function AdminPanel() {
                 </ul>
               )}
             </Droppable>
-          </DragDropContext>
         </div>
 
         {/* Manage Machines */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Machines</h3>
+        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+          <h3 className="text-xl font-bold text-gray-900 mb-6 border-b border-gray-200 pb-4">Machines</h3>
           
           <form onSubmit={handleAddMachine} className="flex flex-col gap-3 mb-6">
             <select
@@ -782,8 +950,7 @@ export function AdminPanel() {
             </div>
           </form>
 
-          <DragDropContext onDragEnd={handleDragEnd}>
-            <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
+          <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
               {lines.map(line => {
                 const lineMachines = machines.filter(m => m.lineId === line.id);
                 if (lineMachines.length === 0) return null;
@@ -921,11 +1088,10 @@ export function AdminPanel() {
               })}
               {machines.length === 0 && <div className="text-gray-500 text-center py-4">No machines found.</div>}
             </div>
-          </DragDropContext>
         </div>
         {/* Manage Teams */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Maintenance Teams</h3>
+        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+          <h3 className="text-xl font-bold text-gray-900 mb-6 border-b border-gray-200 pb-4">Teams</h3>
           
           <form onSubmit={handleAddGroup} className="flex flex-col sm:flex-row gap-3 mb-6">
             <input
@@ -937,10 +1103,10 @@ export function AdminPanel() {
               required
             />
             <MultiSelect
-              options={users.filter(u => u.role === 'maintenance_engineer').map(me => ({ value: me.id, label: me.displayName || me.email }))}
+              options={users.filter(u => u.role !== 'admin').map(u => ({ value: u.id, label: u.displayName || u.email }))}
               selectedValues={newGroupUsers}
               onChange={setNewGroupUsers}
-              placeholder="Select MEs..."
+              placeholder="Select PIC..."
               className="w-full sm:w-64"
             />
             <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
@@ -948,47 +1114,134 @@ export function AdminPanel() {
             </button>
           </form>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {groups.map(group => (
-              <div key={group.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 flex flex-col h-full">
-                <div className="flex justify-between items-start mb-3">
-                  <h4 className="font-bold text-gray-800">{group.name}</h4>
-                  <button 
-                    onClick={() => handleDeleteGroup(group.id, group.name)} 
-                    className="text-red-500 hover:text-red-700 p-1"
-                    title="Delete Team"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-                <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Assigned MEs:</label>
-                  <MultiSelect
-                    options={users.filter(u => u.role === 'maintenance_engineer').map(me => ({ value: me.id, label: me.displayName || me.email }))}
-                    selectedValues={group.userIds || []}
-                    onChange={async (newValues) => {
-                      try {
-                        await updateDoc(doc(db, 'groups', group.id), {
-                          userIds: newValues
-                        });
-                      } catch (err) {
-                        console.error('Error updating team members:', err);
-                        setErrorMsg('Failed to update team members.');
-                      }
-                    }}
-                    placeholder="Select MEs..."
-                    className="w-full text-sm"
-                  />
-                </div>
-              </div>
-            ))}
-            {groups.length === 0 && <div className="col-span-full text-gray-500 text-center py-4">No teams found.</div>}
-          </div>
+          <Droppable droppableId="groups-list">
+              {(provided) => (
+                <ul
+                  {...provided.droppableProps}
+                  ref={provided.innerRef}
+                  className="space-y-2 max-h-96 overflow-y-auto pr-2"
+                >
+                  {groups.map((group, index) => (
+                    <Draggable key={group.id} draggableId={group.id} index={index}>
+                      {(provided, snapshot) => (
+                        <li
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          className={`flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-4 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors ${
+                            snapshot.isDragging ? 'shadow-lg ring-1 ring-blue-500 bg-white z-50' : ''
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 w-full sm:w-auto">
+                            <div
+                              {...provided.dragHandleProps}
+                              className="text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing p-1"
+                            >
+                              <GripVertical size={20} />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {editingGroupId === group.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={editGroupName}
+                                    onChange={(e) => setEditGroupName(e.target.value)}
+                                    className="p-1 border border-gray-300 rounded text-sm w-40"
+                                    autoFocus
+                                    onKeyDown={async (e) => {
+                                      if (e.key === 'Enter' && editGroupName.trim()) {
+                                        try {
+                                          await updateDoc(doc(db, 'groups', group.id), { name: editGroupName.trim() });
+                                          setEditingGroupId(null);
+                                        } catch (err) { }
+                                      } else if (e.key === 'Escape') {
+                                        setEditingGroupId(null);
+                                      }
+                                    }}
+                                  />
+                                  <button onClick={async () => {
+                                    if (editGroupName.trim()) {
+                                       await updateDoc(doc(db, 'groups', group.id), { name: editGroupName.trim() });
+                                       setEditingGroupId(null);
+                                    }
+                                  }} className="text-green-600 p-1"><Save size={16}/></button>
+                                  <button onClick={() => setEditingGroupId(null)} className="text-gray-500 p-1"><X size={16}/></button>
+                                </div>
+                              ) : (
+                                <>
+                                  <h4 className="font-bold text-gray-800 select-none">{group.name}</h4>
+                                  <button onClick={() => { setEditingGroupId(group.id); setEditGroupName(group.name); }} className="text-blue-500 hover:text-blue-700 p-1">
+                                    <Edit2 size={14} />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 flex-1 w-full sm:w-auto justify-end flex-wrap">
+                            <div className="flex flex-col flex-1 sm:flex-none sm:min-w-[120px]">
+                                <label className="block text-xs font-medium text-gray-500 mb-1 truncate" title="Show in Out of Order popup">Show in OOO Visibility:</label>
+                                <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 transition-colors h-[38px]">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!group.showInOutofOrder}
+                                    onChange={async (e) => {
+                                      try {
+                                        await updateDoc(doc(db, 'groups', group.id), {
+                                          showInOutofOrder: e.target.checked
+                                        });
+                                      } catch (err) {
+                                        console.error('Error updating team settings:', err);
+                                        setErrorMsg('Failed to update team settings.');
+                                      }
+                                    }}
+                                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"
+                                  />
+                                  <span className="text-sm font-medium text-gray-700 select-none">Visible</span>
+                                </label>
+                            </div>
+                            <div className="w-full sm:max-w-xs text-sm flex-1">
+                              <label className="block text-xs font-medium text-gray-500 mb-1">Assigned PIC:</label>
+                              <MultiSelect
+                                options={users.filter(u => u.role !== 'admin').map(u => ({ value: u.id, label: u.displayName || u.email }))}
+                                selectedValues={group.userIds || []}
+                                onChange={async (newValues) => {
+                                  try {
+                                    await updateDoc(doc(db, 'groups', group.id), {
+                                      userIds: newValues
+                                    });
+                                  } catch (err) {
+                                    console.error('Error updating team members:', err);
+                                    setErrorMsg('Failed to update team members.');
+                                  }
+                                }}
+                                placeholder="Select PIC..."
+                                className="w-full text-sm bg-white"
+                              />
+                            </div>
+                            <div className="flex flex-col pt-5">
+                              <button
+                                onClick={() => handleDeleteGroup(group.id, group.name)}
+                                className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-lg border border-transparent hover:border-red-200 bg-white shadow-sm h-[38px] flex items-center justify-center transition-colors"
+                                title="Delete Team"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          </div>
+                        </li>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                  {groups.length === 0 && <li className="text-gray-500 text-center py-4">No teams found.</li>}
+                </ul>
+              )}
+            </Droppable>
         </div>
 
         {/* Manage Reason Codes */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Reason Codes</h3>
+        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+          <h3 className="text-xl font-bold text-gray-900 mb-6 border-b border-gray-200 pb-4">Reason Codes</h3>
           
           <form onSubmit={handleAddReasonCode} className="flex flex-col sm:flex-row gap-3 mb-6">
             <input
@@ -1012,29 +1265,59 @@ export function AdminPanel() {
             </button>
           </form>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {reasonCodes.map(code => (
-              <div key={code.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 flex justify-between items-start">
-                <div>
-                  <h4 className="font-bold text-gray-800">{code.code}</h4>
-                  <p className="text-sm text-gray-600 mt-1">{code.description}</p>
-                </div>
-                <button 
-                  onClick={() => handleDeleteReasonCode(code.id, code.code)} 
-                  className="text-red-500 hover:text-red-700 p-1"
-                  title="Delete Reason Code"
+          <Droppable droppableId="reason-codes-list">
+              {(provided) => (
+                <ul
+                  {...provided.droppableProps}
+                  ref={provided.innerRef}
+                  className="space-y-2 max-h-96 overflow-y-auto pr-2"
                 >
-                  <Trash2 size={18} />
-                </button>
-              </div>
-            ))}
-            {reasonCodes.length === 0 && <div className="col-span-full text-gray-500 text-center py-4">No reason codes found.</div>}
-          </div>
+                  {reasonCodes.map((code, index) => (
+                    <Draggable key={code.id} draggableId={code.id} index={index}>
+                      {(provided, snapshot) => (
+                        <li
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          className={`flex justify-between items-center p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors ${
+                            snapshot.isDragging ? 'shadow-lg ring-1 ring-blue-500 bg-white z-50' : ''
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              {...provided.dragHandleProps}
+                              className="text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing p-1"
+                            >
+                              <GripVertical size={20} />
+                            </div>
+                            <div>
+                              <span className="inline-block px-2.5 py-1 text-xs font-bold uppercase tracking-wider bg-blue-100 text-blue-800 rounded mr-2">
+                                {code.code}
+                              </span>
+                              <span className="text-gray-700 font-medium">{code.description}</span>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => handleDeleteReasonCode(code.id, code.code)}
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded border border-transparent hover:border-red-200 bg-white shadow-sm"
+                            title="Delete Reason Code"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </li>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                  {reasonCodes.length === 0 && <li className="text-gray-500 text-center py-4">No reason codes found.</li>}
+                </ul>
+              )}
+            </Droppable>
         </div>
 
         {/* Manage Evaluation Causes */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Evaluation Causes</h3>
+        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+          <h3 className="text-xl font-bold text-gray-900 mb-6 border-b border-gray-200 pb-4">Evaluation Causes</h3>
           
           <form onSubmit={handleAddEvaluationCause} className="flex flex-col sm:flex-row gap-3 mb-6">
             <input
@@ -1050,42 +1333,152 @@ export function AdminPanel() {
             </button>
           </form>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {evaluationCauses.map(cause => (
-              <div key={cause.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50 flex justify-between items-center">
-                <span className="font-medium text-gray-800">{cause.name}</span>
-                <button 
-                  onClick={() => handleDeleteEvaluationCause(cause.id, cause.name)} 
-                  className="text-red-500 hover:text-red-700 p-1 bg-white rounded-md shadow-sm border border-gray-100"
-                  title="Delete Evaluation Cause"
+          <Droppable droppableId="evaluation-causes-list">
+              {(provided) => (
+                <ul
+                  {...provided.droppableProps}
+                  ref={provided.innerRef}
+                  className="space-y-2 max-h-96 overflow-y-auto pr-2"
                 >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ))}
-            {evaluationCauses.length === 0 && <div className="col-span-full text-gray-500 text-center py-4">No evaluation causes found.</div>}
-          </div>
+                  {evaluationCauses.map((cause, index) => (
+                    <Draggable key={cause.id} draggableId={cause.id} index={index}>
+                      {(provided, snapshot) => (
+                        <li
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          className={`flex justify-between items-center p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors ${
+                            snapshot.isDragging ? 'shadow-lg ring-1 ring-blue-500 bg-white z-50' : ''
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              {...provided.dragHandleProps}
+                              className="text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing p-1"
+                            >
+                              <GripVertical size={20} />
+                            </div>
+                            <span className="font-medium text-gray-800 select-none">{cause.name}</span>
+                          </div>
+
+                          <button
+                            onClick={() => handleDeleteEvaluationCause(cause.id, cause.name)}
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded border border-transparent hover:border-red-200 bg-white shadow-sm"
+                            title="Delete Evaluation Cause"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </li>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                  {evaluationCauses.length === 0 && <li className="text-gray-500 text-center py-4">No evaluation causes found.</li>}
+                </ul>
+              )}
+            </Droppable>
         </div>
 
       </div>
 
       {/* Role Permissions */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
+      <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+        <h3 className="text-xl font-bold text-gray-900 mb-6 border-b border-gray-200 pb-4 flex items-center gap-2">
           <Settings size={20} className="text-blue-600" />
           Role Authorities
         </h3>
-        <p className="text-sm text-gray-600 mb-4">
-          Select which pages each role can access.
-        </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+          <p className="text-sm text-gray-600">
+            Select which pages each role can access. System roles are preserved. Add custom roles and configure their authorities.
+          </p>
+          <form onSubmit={handleAddRole} className="flex gap-2 max-w-sm w-full">
+            <input
+              type="text"
+              value={newRoleName}
+              onChange={(e) => setNewRoleName(e.target.value)}
+              placeholder="Add New Role (e.g. Inspector)"
+              className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              required
+            />
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Plus size={16} /> Add Role
+            </button>
+          </form>
+        </div>
         <div className="overflow-x-auto mb-4">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
                 <th className="p-3 font-medium">Page</th>
-                {roles.map(role => (
-                  <th key={role} className="p-3 font-medium text-center">{role.replace('_', ' ')}</th>
-                ))}
+                {roles.map(role => {
+                  const isDefaultRole = ['admin', 'manager', 'pd_engineer', 'line_leader', 'maintenance_engineer'].includes(role);
+                  return (
+                    <th key={role} className="p-3 font-medium text-center">
+                      <div className="flex items-center justify-center gap-1.5 min-w-[125px]">
+                        {editingRoleId === role ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={editRoleName}
+                              onChange={(e) => setEditRoleName(e.target.value)}
+                              className="p-1 border border-gray-300 rounded text-sm w-24"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  setPermissions((prev: any) => ({
+                                    ...prev,
+                                    _displayNames: { ...(prev._displayNames || {}), [role]: editRoleName.trim() }
+                                  }));
+                                  setEditingRoleId(null);
+                                } else if (e.key === 'Escape') {
+                                  setEditingRoleId(null);
+                                }
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                setPermissions((prev: any) => ({
+                                  ...prev,
+                                  _displayNames: { ...(prev._displayNames || {}), [role]: editRoleName.trim() }
+                                }));
+                                setEditingRoleId(null);
+                              }}
+                              className="text-green-600 hover:text-green-800"
+                            >
+                              <Save size={14} />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span className="capitalize">{permissions._displayNames?.[role] || role.replace(/_/g, ' ')}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingRoleId(role);
+                                setEditRoleName(permissions._displayNames?.[role] || role.replace(/_/g, ' '));
+                              }}
+                              className="text-blue-500 hover:text-blue-700 p-1"
+                            >
+                              <Edit2 size={12} />
+                            </button>
+                            {!isDefaultRole && (
+                              <button
+                                type="button"
+                                onClick={() => confirmDeleteRole(role)}
+                                className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 transition-colors"
+                                title="Delete custom role"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -1122,8 +1515,8 @@ export function AdminPanel() {
       </div>
 
       {/* Manage Users */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <div className="flex justify-between items-center mb-4 border-b pb-2">
+      <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+        <div className="flex justify-between items-center mb-6 border-b border-gray-200 pb-4">
           <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
             <UserCog size={20} className="text-blue-600" />
             User Management
@@ -1158,7 +1551,7 @@ export function AdminPanel() {
                       u.role === 'pending' ? 'bg-yellow-100 text-yellow-800' :
                       'bg-blue-100 text-blue-800'
                     }`}>
-                      {u.role.replace('_', ' ')}
+                      {permissions._displayNames?.[u.role] || u.role.replace(/_/g, ' ')}
                     </span>
                   </td>
                   <td className="p-4">
@@ -1176,15 +1569,13 @@ export function AdminPanel() {
                     <select
                       value={u.role}
                       onChange={(e) => handleRoleChange(u.id, e.target.value, u.isInvitation)}
-                      className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm capitalize"
                       disabled={u.email === 'essam.bn@yahoo.com' || u.email === 'cron@sharestate.com'} // Prevent changing main admin
                     >
                       <option value="pending">Pending</option>
-                      <option value="line_leader">Line Leader</option>
-                      <option value="maintenance_engineer">Maintenance Engineer</option>
-                      <option value="pd_engineer">PD Engineer</option>
-                      <option value="manager">Manager</option>
-                      <option value="admin">Admin</option>
+                      {roles.map(r => (
+                        <option key={r} value={r}>{permissions._displayNames?.[r] || r.replace(/_/g, ' ')}</option>
+                      ))}
                     </select>
                     
                     {u.email !== 'essam.bn@yahoo.com' && u.email !== 'cron@sharestate.com' && (
@@ -1243,6 +1634,32 @@ export function AdminPanel() {
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Custom Role Confirmation Modal */}
+      {roleToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-xl shadow-lg max-w-md w-full">
+            <h3 className="text-xl font-bold text-gray-900 mb-4">Confirm Role Deletion</h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete the custom role <strong>{permissions._displayNames?.[roleToDelete] || roleToDelete.replace(/_/g, ' ')}</strong>? Custom authorities for this role will be removed. This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setRoleToDelete(null)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteRoleSubmit}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+              >
+                Delete Role
               </button>
             </div>
           </div>
@@ -1320,14 +1737,12 @@ export function AdminPanel() {
                 <select
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 capitalize"
                 >
                   <option value="pending">Pending</option>
-                  <option value="line_leader">Line Leader</option>
-                  <option value="maintenance_engineer">Maintenance Engineer</option>
-                  <option value="pd_engineer">PD Engineer</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Admin</option>
+                  {roles.map(r => (
+                    <option key={r} value={r}>{permissions._displayNames?.[r] || r.replace(/_/g, ' ')}</option>
+                  ))}
                 </select>
               </div>
               
@@ -1368,6 +1783,7 @@ export function AdminPanel() {
         onClose={() => setIsProductionHoursModalOpen(false)}
         lines={lines}
       />
-    </div>
+      </div>
+    </DragDropContext>
   );
 }

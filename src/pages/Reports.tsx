@@ -3,13 +3,14 @@ import { collection, query, orderBy, getDocs, where, doc, updateDoc, setDoc, del
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import * as XLSX from 'xlsx-js-style';
-import { FileSpreadsheet, Download, Calendar, Edit2, Filter, Save, Loader2, GripVertical, Trash2 } from 'lucide-react';
+import Papa from 'papaparse';
+import { FileSpreadsheet, Download, Calendar, Edit2, Filter, Save, Loader2, GripVertical, Trash2, CheckCircle, AlertTriangle, UploadCloud } from 'lucide-react';
 import { format, subDays, addDays, startOfDay, endOfDay, eachDayOfInterval } from 'date-fns';
 import { getServerTime } from '../utils/time';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 
 export function Reports() {
-  const { profile } = useAuth();
+  const { profile, formatRole } = useAuth();
   const [loading, setLoading] = useState(false);
   const [incidents, setIncidents] = useState<any[]>([]);
   const [wipSnapshots, setWipSnapshots] = useState<any[]>([]);
@@ -18,6 +19,8 @@ export function Reports() {
   const [evaluations, setEvaluations] = useState<any[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const [users, setUsers] = useState<any[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
+  const [groupsMap, setGroupsMap] = useState<Record<string, string>>({});
   const [machinesMap, setMachinesMap] = useState<Record<string, string>>({});
   const [linesMap, setLinesMap] = useState<Record<string, string>>({});
   const [lines, setLines] = useState<any[]>([]);
@@ -56,6 +59,9 @@ export function Reports() {
   const [editResolvedBy, setEditResolvedBy] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const [editedHours, setEditedHours] = useState<Record<string, number | ''>>({});
 
@@ -93,6 +99,19 @@ export function Reports() {
         });
         setUsersMap(uMap);
         setUsers(uList);
+
+        // Fetch groups for mapping
+        step = 'groups';
+        const groupsSnapshot = await getDocs(collection(db, 'groups')).catch(e => { throw new Error(step + ' failed: ' + e.message) });
+        const gMap: Record<string, string> = {};
+        const gList: any[] = [];
+        groupsSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          gMap[doc.id] = data.name;
+          gList.push({ id: doc.id, ...data });
+        });
+        setGroupsMap(gMap);
+        setGroups(gList);
 
         // Fetch machines for mapping
         step = 'machines';
@@ -266,7 +285,7 @@ export function Reports() {
     if (inc.durationMinutes != null) return inc.durationMinutes;
     if (!inc.startTime) return 0;
     const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
-    return Math.floor((getServerTime().getTime() - start.getTime()) / 60000);
+    return Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
   }, []);
 
   const dateRange = useMemo(() => {
@@ -383,6 +402,85 @@ export function Reports() {
     }
   };
 
+  const handleImportCsv = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setSuccessMsg(null);
+    setError(null);
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        try {
+          const data = results.data as any[];
+          let importedCount = 0;
+          for (const row of data) {
+             const startStr = row['Start Time'];
+             if (!row['Machine Name'] || !startStr || startStr === 'N/A') continue;
+
+             let type = 'maintenance';
+             if (row['Type'] === 'Out of Order') type = 'out_of_order';
+             if (row['Type'] === 'Upcoming Issue' || row['Type'] === 'Line Stopped') type = 'line_issue';
+             if (row['Type'] === 'Breakdown') type = 'breakdown';
+
+             const endStr = row['End Time'];
+
+             const lineObj = lines.find(l => l.name === row['Line Name']);
+             const lineId = lineObj?.id || 'unknown_line';
+             
+             let machineId = 'unknown_machine';
+             if (row['Machine Name'] === 'Line Issue') machineId = 'line_issue';
+             else {
+               const foundMachine = machines.find(m => m.name === row['Machine Name']);
+               if (foundMachine) machineId = foundMachine.id;
+             }
+
+             await addDoc(collection(db, 'incidents'), {
+               machineName: row['Machine Name'],
+               lineName: row['Line Name'] || 'Unknown',
+               status: row['Status'] === 'Ongoing' || row['Status'] === 'open' ? 'open' : row['Status'] ? row['Status'].toLowerCase().replace(' ', '_') : 'resolved',
+               type,
+               startTime: Timestamp.fromDate(new Date(startStr)),
+               endTime: endStr && endStr !== 'Ongoing' && endStr !== 'N/A' ? Timestamp.fromDate(new Date(endStr)) : null,
+               durationMinutes: parseInt(row['Duration (Minutes)']) || null,
+               totalJigs: parseInt(row['Total Jigs']) || null,
+               breakdownJigs: parseInt(row['Stopped Jigs']) || null,
+               reasonCode: row['Reason Code'] !== 'N/A' ? row['Reason Code'] : null,
+               cause: row['Root Cause'] !== 'N/A' && row['Root Cause'] ? row['Root Cause'] : null,
+               action: row['Action Taken'] !== 'N/A' && row['Action Taken'] ? row['Action Taken'] : null,
+               lineId,
+               machineId,
+               reportedByName: row['Reported By'] !== 'N/A' ? row['Reported By'] : 'CSV Import',
+               reportedBy: profile?.uid || 'import'
+             });
+             importedCount++;
+          }
+          setSuccessMsg(`Successfully imported ${importedCount} incidents`);
+          setTimeout(() => setSuccessMsg(null), 5000);
+          
+          const qIncidents = query(collection(db, 'incidents'), orderBy('startTime', 'desc'), limit(5000));
+          const snapshot = await getDocs(qIncidents);
+          setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        } catch (err) {
+          console.error('Import error', err);
+          setError('Failed to import CSV');
+        } finally {
+          setIsImporting(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+      },
+      error: (err) => {
+        console.error(err);
+        setError('Failed to parse CSV');
+        setIsImporting(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    });
+  };
+
   const handleExport = () => {
     if (activeTab === 'downtime') {
       if (filteredIncidents.length === 0) {
@@ -406,7 +504,7 @@ export function Reports() {
           'Line Name': incident.lineName,
           'Machine Name': incident.machineName,
           'Status': incident.status,
-          'Type': incident.type === 'out_of_order' ? 'Out of Order' : 'Maintenance',
+          'Type': incident.type === 'out_of_order' ? 'Out of Order' : incident.type === 'line_issue' ? (incident.lineIssueType === 'upcoming' || incident.remainingTimeMinutes != null ? 'Upcoming Issue' : 'Line Stopped') : incident.type === 'maintenance' ? 'Maintenance' : 'Breakdown',
           'Start Time': start ? format(start, 'yyyy-MM-dd HH:mm:ss') : 'N/A',
           'End Time': end ? format(end, 'yyyy-MM-dd HH:mm:ss') : 'Ongoing',
           'Duration (Minutes)': getIncidentDuration(incident),
@@ -416,6 +514,9 @@ export function Reports() {
             ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (getIncidentDuration(incident) / 60) * 100).toFixed(2) + '%'
             : 'N/A',
           'Reason Code': incident.reasonCode || 'N/A',
+          'Team': incident.assignedGroups && incident.assignedGroups.length > 0
+            ? incident.assignedGroups.map((groupId: string) => groupsMap[groupId] || 'Unknown Team').join(', ')
+            : 'N/A',
           'Cause': incident.cause || 'N/A',
           'Action Taken': incident.action || 'N/A',
           'Reported By': formatName(getDisplayName(incident.reportedBy, incident.reportedByName)),
@@ -547,7 +648,7 @@ export function Reports() {
           'User ID': u.id,
           'Name': u.displayName || 'Unknown',
           'Email': u.email || 'N/A',
-          'Role': u.role || 'N/A',
+          'Role': u.role ? formatRole(u.role) : 'N/A',
           'Status': u.status || 'N/A',
           'Created At': createdAt ? format(createdAt, 'yyyy-MM-dd HH:mm:ss') : 'N/A',
           'Last Active': lastActive ? format(lastActive, 'yyyy-MM-dd HH:mm:ss') : 'N/A',
@@ -666,22 +767,56 @@ export function Reports() {
           </button>
         </div>
       )}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-green-100 text-green-700 rounded-full">
-            <FileSpreadsheet size={24} />
+      {successMsg && (
+        <div className="bg-green-50 text-green-700 p-4 rounded-lg flex items-center justify-between border border-green-100 mb-6">
+          <div className="flex items-center gap-2">
+            <p className="font-medium">{successMsg}</p>
           </div>
-          <h2 className="text-2xl font-bold text-gray-800">Export Data</h2>
+          <button onClick={() => setSuccessMsg(null)} className="text-green-500 hover:text-green-700">
+            &times;
+          </button>
+        </div>
+      )}
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+        <div className="flex items-center gap-4">
+          <div className="p-3.5 bg-green-100 text-green-700 rounded-2xl shadow-sm">
+            <FileSpreadsheet size={28} />
+          </div>
+          <div>
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">Export & Import Data</h2>
+            <p className="text-sm text-gray-500 mt-1">Manage, import, and download your production data</p>
+          </div>
         </div>
         
-        <button
-          onClick={handleExport}
-          disabled={loading || (activeTab === 'downtime' ? incidents.length === 0 : activeTab === 'wip' ? wipEntries.length === 0 : activeTab === 'shift_hrs' ? productionHours.length === 0 : activeTab === 'evaluation' ? filteredEvaluations.length === 0 : users.length === 0)}
-          className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center gap-2"
-        >
-          <Download size={20} />
-          Export to Excel
-        </button>
+        <div className="flex flex-wrap gap-3 w-full md:w-auto">
+          {profile?.role === 'admin' && activeTab === 'downtime' && (
+            <div className="w-full sm:w-auto">
+              <input 
+                type="file" 
+                accept=".csv" 
+                ref={fileInputRef} 
+                onChange={handleImportCsv} 
+                className="hidden" 
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isImporting || loading}
+                className="w-full sm:w-auto px-6 py-3 text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 font-semibold rounded-xl transition-all disabled:opacity-50 shadow-sm flex items-center justify-center gap-2"
+              >
+                {isImporting ? <Loader2 size={20} className="animate-spin" /> : <UploadCloud size={20} />}
+                {isImporting ? 'Importing...' : 'Import CSV'}
+              </button>
+            </div>
+          )}
+          <button
+            onClick={handleExport}
+            disabled={loading || (activeTab === 'downtime' ? incidents.length === 0 : activeTab === 'wip' ? wipEntries.length === 0 : activeTab === 'shift_hrs' ? productionHours.length === 0 : activeTab === 'evaluation' ? filteredEvaluations.length === 0 : users.length === 0)}
+            className="w-full sm:w-auto px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center justify-center gap-2"
+          >
+            <Download size={20} />
+            Export to Excel
+          </button>
+        </div>
       </div>
 
       <div className="flex border-b border-gray-200 mb-6 overflow-x-auto">
@@ -880,6 +1015,7 @@ export function Reports() {
                     <th className="p-4 font-medium">Total Jigs</th>
                     <th className="p-4 font-medium">Stopped Jigs</th>
                     <th className="p-4 font-medium">Breakdown (%)</th>
+                    <th className="p-4 font-medium">Team</th>
                     <th className="p-4 font-medium">Reported By</th>
                     <th className="p-4 font-medium">Fixed By</th>
                     {profile?.role === 'admin' && <th className="p-4 font-medium text-right">Actions</th>}
@@ -929,7 +1065,7 @@ export function Reports() {
                         </span>
                       </td>
                       <td className="p-4 text-gray-600 capitalize">
-                        {incident.type === 'out_of_order' ? 'Out of Order' : 'Maintenance'}
+                        {incident.type === 'out_of_order' ? 'Out of Order' : incident.type === 'line_issue' ? (incident.lineIssueType === 'upcoming' || incident.remainingTimeMinutes != null ? 'Upcoming Issue' : 'Line Stopped') : incident.type === 'maintenance' ? 'Maintenance' : incident.type === 'line_off' ? 'Line Off' : 'Breakdown'}
                       </td>
                       <td className="p-4 text-gray-600">{start ? format(start, 'MMM d, yyyy HH:mm') : 'N/A'}</td>
                       <td className="p-4 font-medium text-gray-800">
@@ -945,6 +1081,11 @@ export function Reports() {
                         {getIncidentDuration(incident) > 0
                           ? ((Number(incident.totalJigs ? (incident.breakdownJigs || 0) : 1) / Number(incident.totalJigs || 1)) * (getIncidentDuration(incident) / 60) * 100).toFixed(2) + '%'
                           : '-'}
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        {incident.assignedGroups && incident.assignedGroups.length > 0 ? (
+                          incident.assignedGroups.map((groupId: string) => groupsMap[groupId] || 'Unknown Team').join(', ')
+                        ) : '-'}
                       </td>
                       <td className="p-4 text-gray-600">
                         {formatName(getDisplayName(incident.reportedBy, incident.reportedByName))}
@@ -1209,7 +1350,7 @@ export function Reports() {
                           u.role === 'pending' ? 'bg-gray-100 text-gray-800' :
                           'bg-green-100 text-green-800'
                         }`}>
-                          {u.role ? u.role.replace('_', ' ').toUpperCase() : 'N/A'}
+                          {u.role ? formatRole(u.role).toUpperCase() : 'N/A'}
                         </span>
                       </td>
                       <td className="p-4">

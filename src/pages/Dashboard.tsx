@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { collection, onSnapshot, query, orderBy, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, where, writeBatch, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Crown, Info, Clock, LayoutGrid, List } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -11,6 +11,7 @@ interface Line {
   name: string;
   wipUpdatedAt?: any;
   colorCode?: string;
+  status?: 'running' | 'upcoming' | 'stopped' | 'line_off';
 }
 
 interface Machine {
@@ -33,15 +34,19 @@ interface Incident {
   breakdownJigs?: number | null;
   totalJigs?: number | null;
   type?: string;
+  lineId?: string;
+  assignedGroups?: string[];
 }
 
 import { getServerTime } from '../utils/time';
 
 export function Dashboard() {
-  const { profile, user } = useAuth();
+  const { profile, user, permissions } = useAuth();
   const [lines, setLines] = useState<Line[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [activeLineIssues, setActiveLineIssues] = useState<Incident[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
   const [productionHours, setProductionHours] = useState<Record<string, number>>({});
   const [now, setNow] = useState(getServerTime());
   const [isCompactView, setIsCompactView] = useState(false);
@@ -62,7 +67,7 @@ export function Dashboard() {
   }, [selectedMachineId]);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(getServerTime()), 30000); // Update every 30 seconds
+    const timer = setInterval(() => setNow(getServerTime()), 1000); // Update every 1 second
     return () => clearInterval(timer);
   }, []);
 
@@ -86,12 +91,23 @@ export function Dashboard() {
       setMachines(fetchedMachines);
     });
 
+    const qGroups = query(collection(db, 'groups'));
+    const unsubGroups = onSnapshot(qGroups, (snapshot) => {
+      setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     const startOfToday = new Date(getServerTime());
     startOfToday.setHours(0, 0, 0, 0);
 
     const qIncidents = query(collection(db, 'incidents'), where('startTime', '>=', startOfToday));
     const unsubIncidents = onSnapshot(qIncidents, (snapshot) => {
       setIncidents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident)));
+    });
+
+    const qActiveIssues = query(collection(db, 'incidents'), where('status', 'in', ['open', 'working_on', 'pending_me_review']));
+    const unsubLineIssues = onSnapshot(qActiveIssues, (snapshot) => {
+      const allActive = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Incident));
+      setActiveLineIssues(allActive.filter(i => i.type === 'line_issue' || i.type === 'line_off'));
     });
 
     const todayStr = format(getServerTime(), 'yyyy-MM-dd');
@@ -108,10 +124,15 @@ export function Dashboard() {
     return () => {
       unsubLines();
       unsubMachines();
+      unsubGroups();
       unsubIncidents();
+      unsubLineIssues();
       unsubHours();
     };
   }, [user]);
+
+  const role = profile?.role || 'pending';
+  const canSeeLineReport = role === 'admin' || (permissions && permissions[role]?.includes('line_breakdown_report'));
 
   const getMachineIncident = React.useCallback((machine: Machine) => {
     if (machine.currentIncidentId) {
@@ -119,13 +140,43 @@ export function Dashboard() {
       if (incident) return incident;
     }
     // Fallback if currentIncidentId is missing
-    return incidents.find(i => i.machineId === machine.id && (i.status === 'open' || i.status === 'working_on'));
+    return incidents.find(i => i.machineId === machine.id && (i.status === 'open' || i.status === 'working_on' || i.status === 'pending_me_review'));
   }, [incidents]);
+
+  const handleLineBackToWork = async (lineId: string) => {
+    try {
+      const batch = writeBatch(db);
+      const lineRef = doc(db, 'lines', lineId);
+      const openIssue = activeLineIssues.find(i => i.lineId === lineId);
+      
+      batch.update(lineRef, {
+        status: 'running',
+        currentIssueId: null
+      });
+
+      if (openIssue) {
+        const incidentRef = doc(db, 'incidents', openIssue.id);
+        const startTime = openIssue.startTime?.toDate ? openIssue.startTime.toDate() : new Date();
+        const durationMin = Math.max(1, Math.ceil((now.getTime() - startTime.getTime()) / 60000));
+        
+        batch.update(incidentRef, {
+          status: 'resolved',
+          endTime: serverTimestamp(),
+          durationMinutes: durationMin,
+          resolvedBy: user?.uid || 'unknown'
+        });
+      }
+
+      await batch.commit();
+    } catch (error) {
+      console.error('Error setting line to running:', error);
+    }
+  };
 
   const calculateDuration = React.useCallback((startTime: any) => {
     if (!startTime) return 0;
     const start = startTime.toDate ? startTime.toDate() : new Date(startTime);
-    return Math.floor((now.getTime() - start.getTime()) / 60000);
+    return Math.max(1, Math.ceil((now.getTime() - start.getTime()) / 60000));
   }, [now]);
 
   const getMachineStats = React.useCallback((machineId: string, lineId: string) => {
@@ -199,18 +250,81 @@ export function Dashboard() {
               cyan: { border: 'border-t-cyan-500' },
             };
             const styles = colorClasses[colorCode] || colorClasses.blue;
+            let lineBgClass = 'bg-white';
+            let lineBorderClass = `border-x border-b border-gray-100 border-t-4 ${styles.border}`;
+            
+            if (line.status === 'upcoming') {
+              lineBgClass = 'bg-yellow-50 animate-pulse';
+              lineBorderClass = 'border-4 border-yellow-400';
+            } else if (line.status === 'stopped') {
+              lineBgClass = 'bg-red-50 animate-pulse';
+              lineBorderClass = 'border-4 border-red-500';
+            } else if (line.status === 'line_off') {
+              lineBgClass = 'bg-gray-100/50';
+              lineBorderClass = 'border-4 border-gray-300';
+            }
+
+            const activeIssue = (line.status === 'upcoming' || line.status === 'stopped' || line.status === 'line_off') ? activeLineIssues.find(i => i.lineId === line.id) : null;
+            let issueText = '';
+            let countdownText = '';
+            if (activeIssue) {
+              const assignedGroup = activeIssue.assignedGroups?.[0];
+              const groupName = groups.find(g => g.id === assignedGroup)?.name || 'Unknown Team';
+              const rootCause = (activeIssue as any).rootCause;
+              issueText = rootCause ? `${groupName}: ${rootCause}` : groupName;
+
+              if (line.status === 'line_off') {
+                const startTime = activeIssue.startTime?.toDate ? activeIssue.startTime.toDate() : new Date();
+                const totalMs = now.getTime() - startTime.getTime();
+                const totalMin = Math.floor(Math.max(0, totalMs) / 60000);
+                const hrs = Math.floor(totalMin / 60);
+                const mins = totalMin % 60;
+                countdownText = ` (${hrs}h ${mins.toString().padStart(2, '0')}m)`;
+              } else {
+                if (line.status === 'upcoming' && (activeIssue as any).remainingTimeMinutes) {
+                  const startTime = activeIssue.startTime?.toDate ? activeIssue.startTime.toDate() : new Date();
+                  const totalTargetMs = startTime.getTime() + (activeIssue as any).remainingTimeMinutes * 60000;
+                  const remainingMs = totalTargetMs - now.getTime();
+                  if (remainingMs > 0) {
+                    const remainingMin = Math.floor(remainingMs / 60000);
+                    const remainingSec = Math.floor((remainingMs % 60000) / 1000);
+                    countdownText = ` (-${remainingMin}:${remainingSec.toString().padStart(2, '0')})`;
+                  } else {
+                    countdownText = ' (Time Up!)';
+                  }
+                } else if (line.status === 'stopped') {
+                  const startTime = activeIssue.startTime?.toDate ? activeIssue.startTime.toDate() : new Date();
+                  const totalMs = now.getTime() - startTime.getTime();
+                  const totalMin = Math.max(1, Math.ceil(Math.max(0, totalMs) / 60000));
+                  countdownText = ` (${totalMin} min)`;
+                }
+              }
+            }
 
             return (
-              <div key={line.id} className={`bg-white rounded-xl shadow-sm border-x border-b border-gray-100 border-t-4 ${styles.border} ${isCompactView ? 'p-3' : 'p-6'}`}>
+              <div key={line.id} className={`${lineBgClass} rounded-xl shadow-sm ${lineBorderClass} flex flex-col ${isCompactView ? 'p-3' : 'p-6'} transition-colors`}>
                 <div className={`flex justify-between items-center ${isCompactView ? 'mb-2' : 'mb-4'}`}>
-                  <div className="flex items-center gap-2 sm:gap-3">
-                    <h3 className={`font-semibold text-gray-800 ${isCompactView ? 'text-sm' : 'text-lg'}`}>{line.name}</h3>
-                    <span className={`${isCompactView ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1'} font-medium text-blue-600 bg-blue-50 rounded-full border border-blue-100 whitespace-nowrap`}>
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                    <h3 className={`font-semibold ${line.status === 'line_off' ? 'text-gray-500' : 'text-gray-800'} ${isCompactView ? 'text-sm' : 'text-lg'}`}>{line.name}</h3>
+                    <span className={`${isCompactView ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1'} font-medium ${line.status === 'line_off' ? 'text-gray-500 bg-white border-gray-300' : 'text-blue-600 bg-blue-50 border-blue-100'} rounded-full border whitespace-nowrap`}>
                       {isCompactView ? 'S: ' : 'Shift: '}{productionHours[line.id] ?? 9}{isCompactView ? 'h' : 'hrs'}
                     </span>
-                    <span className={`${isCompactView ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1'} font-medium text-purple-600 bg-purple-50 px-2 py-1 rounded-full border border-purple-100 whitespace-nowrap`}>
+                    <span className={`${isCompactView ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1'} font-medium ${line.status === 'line_off' ? 'text-gray-500 bg-white border-gray-300' : 'text-purple-600 bg-purple-50 border-purple-100'} px-2 py-1 rounded-full border whitespace-nowrap`}>
                       {isCompactView ? 'WIP: ' : 'Total WIP: '}{totalWIP}
                     </span>
+                    {line.status === 'line_off' && canSeeLineReport && (
+                      <button
+                        onClick={() => handleLineBackToWork(line.id)}
+                        className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white font-medium rounded text-xs transition-colors shadow-sm"
+                      >
+                        Back to Work
+                      </button>
+                    )}
+                    {issueText && (
+                      <span className={`${isCompactView ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1'} font-bold ${line.status === 'stopped' ? 'text-red-700 bg-red-100 border-red-200' : line.status === 'line_off' ? 'text-gray-700 bg-gray-200 border-gray-300' : 'text-yellow-700 bg-yellow-100 border-yellow-200'} px-2 py-1 rounded-full border whitespace-nowrap`}>
+                        {issueText}{countdownText}
+                      </span>
+                    )}
                   </div>
                   {line.wipUpdatedAt && !isCompactView && (
                     <div className="text-xs text-gray-500 flex items-center gap-1 bg-gray-50 px-2 py-1 rounded border border-gray-100">
@@ -220,7 +334,7 @@ export function Dashboard() {
                   )}
                 </div>
                 
-                <div className="flex flex-wrap gap-x-2 gap-y-4 items-center">
+                <div className={`flex flex-wrap gap-x-2 gap-y-4 items-center ${line.status === 'line_off' ? 'grayscale opacity-60' : ''}`}>
                   {lineMachines.length === 0 ? (
                     <span className="text-[10px] text-gray-400 italic">No machines</span>
                   ) : (
@@ -249,7 +363,7 @@ export function Dashboard() {
                             <button 
                               onClick={() => setSelectedMachineId(selectedMachineId === machine.id ? null : machine.id)}
                               className={`${iconSize} rounded-full flex items-center justify-center text-white shadow-md transition-transform transform hover:scale-105 active:scale-95 relative outline-none ${
-                                isDown ? (incident?.type === 'out_of_order' ? 'bg-amber-500 animate-pulse' : 'bg-red-500 animate-pulse') : 'bg-green-500'
+                                isDown ? (incident?.type === 'out_of_order' ? 'bg-amber-500 animate-pulse' : incident?.type === 'maintenance' ? 'bg-blue-500 animate-pulse' : 'bg-red-500 animate-pulse') : 'bg-green-500'
                               }`}
                             >
                               {machine.isCritical && (

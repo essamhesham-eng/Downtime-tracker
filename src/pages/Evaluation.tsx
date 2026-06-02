@@ -68,6 +68,7 @@ export function Evaluation() {
     
     const qEvals = query(
       collection(db, 'evaluations'),
+      where('createdAt', '>=', currentPeriod.start),
       orderBy('createdAt', 'desc'),
       limit(5000)
     );
@@ -76,7 +77,7 @@ export function Evaluation() {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const periodEvals = data.filter((e: any) => {
         const d = e.createdAt?.toDate ? e.createdAt.toDate() : (e.createdAt ? new Date(e.createdAt) : new Date());
-        const inPeriod = d >= currentPeriod.start && d <= currentPeriod.end;
+        const inPeriod = d <= currentPeriod.end;
         if (isLineLeader && e.evaluatorId !== profile?.uid) {
           return false;
         }

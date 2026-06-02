@@ -18,6 +18,7 @@ export function IncidentsList() {
   const [now, setNow] = useState(getServerTime());
   const [reviewingIncident, setReviewingIncident] = useState<any | null>(null);
   const [cause, setCause] = useState('');
+  const [selectedResponsibleGroup, setSelectedResponsibleGroup] = useState<string>('');
   const [action, setAction] = useState('');
   const [causeImage, setCauseImage] = useState<File | null>(null);
   const [actionImage, setActionImage] = useState<File | null>(null);
@@ -80,7 +81,14 @@ export function IncidentsList() {
 
     const qGroups = query(collection(db, 'groups'));
     const unsubGroups = onSnapshot(qGroups, (snapshot) => {
-      setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const sorted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      sorted.sort((a: any, b: any) => {
+        const orderA = a.order !== undefined ? a.order : 0;
+        const orderB = b.order !== undefined ? b.order : 0;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      setGroups(sorted);
     });
 
     const qLines = query(collection(db, 'lines'));
@@ -120,12 +128,13 @@ export function IncidentsList() {
     if (!user) return;
     try {
       const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-      const duration = Math.floor((getServerTime().getTime() - start.getTime()) / 60000);
+      const duration = Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
 
       if (incident.type === 'out_of_order') {
-        // For out of order, we prompt for a comment first
+        // For out of order, we prompt for a responsible group first
         setReviewingIncident(incident);
         setCause(incident.cause || '');
+        setSelectedResponsibleGroup(incident.assignedGroups?.[0] || '');
         setAction(incident.action || '');
         setCauseImageUrl(incident.causeImageUrl || null);
         setActionImageUrl(incident.actionImageUrl || null);
@@ -147,10 +156,17 @@ export function IncidentsList() {
         durationMinutes: duration,
       });
 
-      batch.update(doc(db, 'machines', incident.machineId), {
-        status: 'running',
-        currentIncidentId: null,
-      });
+      if (incident.type === 'line_issue') {
+        batch.update(doc(db, 'lines', incident.lineId), {
+          status: 'running',
+          currentIssueId: null,
+        });
+      } else {
+        batch.update(doc(db, 'machines', incident.machineId), {
+          status: 'running',
+          currentIncidentId: null,
+        });
+      }
 
       await batch.commit();
     } catch (error) {
@@ -167,6 +183,11 @@ export function IncidentsList() {
     
     if (willResolve && !selectedReasonCode && reviewingIncident.type !== 'out_of_order') {
       setError('Please select a reason code before resolving.');
+      return;
+    }
+
+    if (willResolve && reviewingIncident.type === 'out_of_order' && !selectedResponsibleGroup) {
+      setError('Please select a responsible team.');
       return;
     }
 
@@ -201,6 +222,10 @@ export function IncidentsList() {
         reviewedAt: serverTimestamp()
       };
       
+      if (reviewingIncident.type === 'out_of_order' && selectedResponsibleGroup) {
+        updates.assignedGroups = [selectedResponsibleGroup];
+      }
+
       if (selectedReasonCode) {
         updates.reasonCode = selectedReasonCode;
       }
@@ -217,17 +242,24 @@ export function IncidentsList() {
         // Only set endTime and duration if they don't already exist (e.g., if line leader already marked it fixed)
         if (!reviewingIncident.endTime) {
           const start = reviewingIncident.startTime?.toDate ? reviewingIncident.startTime.toDate() : new Date(reviewingIncident.startTime);
-          const duration = Math.floor((getServerTime().getTime() - start.getTime()) / 60000);
+          const duration = Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
           
           updates.resolvedBy = user.uid;
           updates.resolvedByName = user.displayName || user.email || 'Unknown';
           updates.endTime = serverTimestamp();
           updates.durationMinutes = duration;
           
-          batch.update(doc(db, 'machines', reviewingIncident.machineId), {
-            status: 'running',
-            currentIncidentId: null,
-          });
+          if (reviewingIncident.type === 'line_issue') {
+            batch.update(doc(db, 'lines', reviewingIncident.lineId), {
+              status: 'running',
+              currentIssueId: null,
+            });
+          } else {
+            batch.update(doc(db, 'machines', reviewingIncident.machineId), {
+              status: 'running',
+              currentIncidentId: null,
+            });
+          }
         }
       }
 
@@ -236,6 +268,7 @@ export function IncidentsList() {
       await batch.commit();
       setReviewingIncident(null);
       setCause('');
+      setSelectedResponsibleGroup('');
       setAction('');
       setCauseImage(null);
       setActionImage(null);
@@ -316,7 +349,7 @@ export function IncidentsList() {
   const maintenanceEngineers = React.useMemo(() => users.filter(u => u.role === 'maintenance_engineer'), [users]);
 
   const activeIncidents = useMemo(() => {
-    let filtered = incidents.filter(i => i.status !== 'resolved');
+    let filtered = incidents.filter(i => i.status !== 'resolved' && i.lineIssueType !== 'line_off');
     
     // Hide out_of_order incidents from maintenance engineers
     if (profile?.role === 'maintenance_engineer') {
@@ -547,7 +580,7 @@ export function IncidentsList() {
                         const isPendingReview = incident.status === 'pending_me_review';
                         const duration = isPendingReview && incident.durationMinutes != null 
                           ? incident.durationMinutes 
-                          : Math.floor((now.getTime() - start.getTime()) / 60000);
+                          : Math.max(1, Math.ceil((now.getTime() - start.getTime()) / 60000));
                         const isWorkingOn = incident.status === 'working_on';
 
                         // Check if current user is assigned via individual assignment or group membership
@@ -606,7 +639,8 @@ export function IncidentsList() {
                               <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${
                                 isPendingReview ? 'bg-blue-100 text-blue-800' :
                                 isWorkingOn ? 'bg-yellow-100 text-yellow-800' : 
-                                incident.type === 'out_of_order' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'
+                                incident.type === 'out_of_order' ? 'bg-amber-100 text-amber-800' : 
+                                incident.type === 'line_off' ? 'bg-gray-100 text-gray-800' : 'bg-red-100 text-red-800'
                               }`}>
                                 {isPendingReview ? 'Pending Review' : incident.status === 'working_on' ? 'Working On' : incident.status}
                               </span>
@@ -630,22 +664,25 @@ export function IncidentsList() {
                               {profile?.role === 'admin' ? (
                                 <div className="space-y-2 mt-2">
                                   <div className="flex items-center gap-2 text-sm text-gray-600">
-                                    <span className="font-medium whitespace-nowrap">Assign MEs:</span>
-                                    <MultiSelect
-                                      options={maintenanceEngineers.map(me => ({ value: me.id, label: me.displayName || me.email }))}
-                                      selectedValues={incident.assignedTo || []}
-                                      onChange={(newValues) => handleAssignME(incident.id, newValues)}
-                                      placeholder="Individual MEs"
-                                      className="w-full"
-                                    />
-                                  </div>
-                                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                                    <span className="font-medium whitespace-nowrap">Assign Groups:</span>
+                                    <span className="font-medium whitespace-nowrap">Team:</span>
                                     <MultiSelect
                                       options={groups.map(g => ({ value: g.id, label: g.name }))}
                                       selectedValues={incident.assignedGroups || []}
                                       onChange={(newValues) => handleAssignGroups(incident.id, newValues)}
-                                      placeholder="Groups"
+                                      placeholder="Teams"
+                                      className="w-full"
+                                    />
+                                  </div>
+                                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                                    <span className="font-medium whitespace-nowrap">PIC:</span>
+                                    <MultiSelect
+                                      options={(incident.assignedGroups && incident.assignedGroups.length > 0
+                                        ? maintenanceEngineers.filter(me => groups.some(g => incident.assignedGroups.includes(g.id) && g.userIds?.includes(me.id)))
+                                        : maintenanceEngineers
+                                      ).map(me => ({ value: me.id, label: me.displayName || me.email }))}
+                                      selectedValues={incident.assignedTo || []}
+                                      onChange={(newValues) => handleAssignME(incident.id, newValues)}
+                                      placeholder="Person In Charge"
                                       className="w-full"
                                     />
                                   </div>
@@ -760,6 +797,7 @@ export function IncidentsList() {
                 <th className="p-4 font-medium cursor-pointer hover:bg-gray-100" onClick={() => handleSort('lineName')}>
                   <div className="flex items-center gap-1">Line <ArrowUpDown size={14} /></div>
                 </th>
+                <th className="p-4 font-medium">Type</th>
                 <th className="p-4 font-medium cursor-pointer hover:bg-gray-100" onClick={() => handleSort('startTime')}>
                   <div className="flex items-center gap-1">Start Time <ArrowUpDown size={14} /></div>
                 </th>
@@ -769,6 +807,7 @@ export function IncidentsList() {
                 <th className="p-4 font-medium">Stopped Jigs</th>
                 <th className="p-4 font-medium">Breakdown (%)</th>
                 <th className="p-4 font-medium">Reason</th>
+                <th className="p-4 font-medium">Team</th>
                 <th className="p-4 font-medium">Reported By</th>
                 <th className="p-4 font-medium">Fixed By</th>
                 <th className="p-4 font-medium">Actions</th>
@@ -777,7 +816,7 @@ export function IncidentsList() {
             <tbody className="">
               {filteredResolvedIncidents.length === 0 ? (
                 <tr>
-                  <td colSpan={profile?.role === 'admin' ? 11 : 10} className="p-8 text-center text-gray-500 border-b border-gray-100">No resolved incidents match your criteria.</td>
+                  <td colSpan={profile?.role === 'admin' ? 13 : 12} className="p-8 text-center text-gray-500 border-b border-gray-100">No resolved incidents match your criteria.</td>
                 </tr>
               ) : (
                 filteredResolvedIncidents.map(incident => {
@@ -804,6 +843,21 @@ export function IncidentsList() {
                       )}
                       <td className="p-4 font-medium text-gray-800">{incident.machineName}</td>
                       <td className="p-4 text-gray-600">{incident.lineName}</td>
+                      <td className="p-4 text-gray-600">
+                        {incident.type === 'out_of_order' ? (
+                          <span className="inline-block px-2 py-1 bg-amber-100 text-amber-800 rounded font-medium text-xs">Out of Order</span>
+                        ) : incident.type === 'line_issue' ? (
+                          <span className={`inline-block px-2 py-1 rounded font-medium text-xs ${incident.lineIssueType === 'upcoming' || incident.remainingTimeMinutes != null ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>
+                            {incident.lineIssueType === 'upcoming' || incident.remainingTimeMinutes != null ? 'Upcoming Issue' : 'Line Stopped'}
+                          </span>
+                        ) : incident.type === 'maintenance' ? (
+                          <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 rounded font-medium text-xs">Maintenance</span>
+                        ) : incident.type === 'line_off' ? (
+                          <span className="inline-block px-2 py-1 bg-gray-100 text-gray-800 rounded font-medium text-xs">Line Off</span>
+                        ) : (
+                          <span className="inline-block px-2 py-1 bg-red-100 text-red-800 rounded font-medium text-xs">Breakdown</span>
+                        )}
+                      </td>
                       <td className="p-4 text-gray-600">{format(start, 'MMM d, HH:mm')}</td>
                       <td className="p-4 font-medium text-red-600">{incident.durationMinutes} mins</td>
                       <td className="p-4 text-gray-600">
@@ -822,6 +876,14 @@ export function IncidentsList() {
                         ) : '-'}
                       </td>
                       <td className="p-4 text-gray-600">
+                        {incident.assignedGroups && incident.assignedGroups.length > 0 ? (
+                          incident.assignedGroups.map((groupId: string) => {
+                            const group = groups.find(g => g.id === groupId);
+                            return group ? group.name : 'Unknown Team';
+                          }).join(', ')
+                        ) : '-'}
+                      </td>
+                      <td className="p-4 text-gray-600">
                         {formatName(getDisplayName(incident.reportedBy, incident.reportedByName))}
                       </td>
                       <td className="p-4 text-gray-600">
@@ -833,6 +895,7 @@ export function IncidentsList() {
                             onClick={() => {
                               setReviewingIncident(incident);
                               setCause(incident.cause || '');
+                              setSelectedResponsibleGroup(incident.assignedGroups?.[0] || '');
                               setAction(incident.action || '');
                               setCauseImageUrl(incident.causeImageUrl || null);
                               setActionImageUrl(incident.actionImageUrl || null);
@@ -869,13 +932,31 @@ export function IncidentsList() {
             <form onSubmit={submitReview} className="space-y-4">
               {reviewingIncident.type === 'out_of_order' ? (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Comment / Reason</label>
-                  <textarea
-                    value={cause}
-                    onChange={(e) => setCause(e.target.value)}
-                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 min-h-[80px]"
-                    placeholder="Describe why the machine was out of order..."
-                  />
+                  <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                    Responsible Team <span className="text-red-500">*</span>
+                  </label>
+                  {groups.filter(g => g.showInOutofOrder).length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {groups.filter(g => g.showInOutofOrder).map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => setSelectedResponsibleGroup(g.id)}
+                          className={`py-2 px-4 rounded-lg font-bold text-sm transition-all border ${
+                            selectedResponsibleGroup === g.id
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                              : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-200'
+                          }`}
+                        >
+                          {g.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-200">
+                      No responsible teams configured. An admin needs to select which teams appear here in the Admin Panel.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
@@ -949,6 +1030,7 @@ export function IncidentsList() {
                   onClick={() => {
                     setReviewingIncident(null);
                     setCause('');
+                    setSelectedResponsibleGroup('');
                     setAction('');
                     setCauseImage(null);
                     setActionImage(null);
@@ -975,8 +1057,8 @@ export function IncidentsList() {
                   <button
                     type="button"
                     onClick={(e) => submitReview(e, true)}
-                    disabled={isSubmittingReview}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                    disabled={isSubmittingReview || (reviewingIncident.type === 'out_of_order' && !selectedResponsibleGroup)}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isSubmittingReview ? 'Saving...' : (reviewingIncident.type === 'out_of_order' ? 'Back to Work' : 'Save & Resolve')}
                   </button>

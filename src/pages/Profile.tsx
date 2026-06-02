@@ -4,7 +4,7 @@ import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 
 import { User, Lock, CheckCircle, AlertTriangle } from 'lucide-react';
 
 export function Profile() {
-  const { user, profile } = useAuth();
+  const { user, profile, formatRole } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -89,7 +89,7 @@ export function Profile() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-500">Role</label>
-            <p className="text-lg font-medium text-gray-900 capitalize">{profile?.role.replace('_', ' ')}</p>
+            <p className="text-lg font-medium text-gray-900 capitalize">{formatRole(profile?.role || '')}</p>
           </div>
         </div>
 

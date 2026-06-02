@@ -3,7 +3,7 @@ import { User, onAuthStateChanged, signOut as firebaseSignOut, signInWithEmailAn
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
-export type UserRole = 'admin' | 'manager' | 'pd_engineer' | 'line_leader' | 'maintenance_engineer' | 'pending';
+export type UserRole = string;
 
 export interface UserProfile {
   uid: string;
@@ -16,7 +16,8 @@ export interface UserProfile {
 }
 
 export interface RolePermissions {
-  [role: string]: string[];
+  _displayNames?: Record<string, string>;
+  [role: string]: any;
 }
 
 export const DEFAULT_PERMISSIONS: RolePermissions = {
@@ -33,6 +34,7 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   permissions: RolePermissions;
+  formatRole: (role: string) => string;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -45,6 +47,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [permissions, setPermissions] = useState<RolePermissions>(DEFAULT_PERMISSIONS);
+
+  const formatRole = React.useCallback((role: string) => {
+    if (!role) return '';
+    return permissions._displayNames?.[role] || role.replace(/_/g, ' ');
+  }, [permissions]);
 
   useEffect(() => {
     if (!user) {
@@ -218,7 +225,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, permissions, signInWithEmail, signUpWithEmail, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, permissions, formatRole, signInWithEmail, signUpWithEmail, signOut }}>
       {children}
     </AuthContext.Provider>
   );

@@ -3,22 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Wrench } from 'lucide-react';
 
-import { Dashboard } from './pages/Dashboard';
-import { ReportIncident } from './pages/ReportIncident';
-import { IncidentsList } from './pages/IncidentsList';
-import { AdminPanel } from './pages/AdminPanel';
-import { Reports } from './pages/Reports';
-import { Profile } from './pages/Profile';
-import { Analysis } from './pages/Analysis';
-import { WIP } from './pages/WIP';
-import { Evaluation } from './pages/Evaluation';
+const Dashboard = React.lazy(() => import('./pages/Dashboard').then(mod => ({ default: mod.Dashboard })));
+const ReportIncident = React.lazy(() => import('./pages/ReportIncident').then(mod => ({ default: mod.ReportIncident })));
+const IncidentsList = React.lazy(() => import('./pages/IncidentsList').then(mod => ({ default: mod.IncidentsList })));
+const AdminPanel = React.lazy(() => import('./pages/AdminPanel').then(mod => ({ default: mod.AdminPanel })));
+const Reports = React.lazy(() => import('./pages/Reports').then(mod => ({ default: mod.Reports })));
+const Profile = React.lazy(() => import('./pages/Profile').then(mod => ({ default: mod.Profile })));
+const Analysis = React.lazy(() => import('./pages/Analysis').then(mod => ({ default: mod.Analysis })));
+const WIP = React.lazy(() => import('./pages/WIP').then(mod => ({ default: mod.WIP })));
+const Evaluation = React.lazy(() => import('./pages/Evaluation').then(mod => ({ default: mod.Evaluation })));
+
+const LoadingFallback = () => (
+  <div className="min-h-[50vh] flex items-center justify-center">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+  </div>
+);
 
 function ProtectedRoute({ children, requiredPermission }: { children: React.ReactNode, requiredPermission?: string }) {
   const { user, profile, loading, permissions, signOut } = useAuth();
@@ -165,53 +171,55 @@ function Login() {
 function AppRoutes() {
   return (
     <ErrorBoundary>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        
-        <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-          <Route index element={<ProtectedRoute requiredPermission="dashboard"><Dashboard /></ProtectedRoute>} />
-          <Route path="report" element={
-            <ProtectedRoute requiredPermission="report">
-              <ReportIncident />
-            </ProtectedRoute>
-          } />
-          <Route path="incidents" element={
-            <ProtectedRoute requiredPermission="incidents">
-              <IncidentsList />
-            </ProtectedRoute>
-          } />
-          <Route path="reports" element={
-            <ProtectedRoute requiredPermission="reports">
-              <Reports />
-            </ProtectedRoute>
-          } />
-          <Route path="analysis" element={
-            <ProtectedRoute requiredPermission="analysis">
-              <Analysis />
-            </ProtectedRoute>
-          } />
-          <Route path="wip" element={
-            <ProtectedRoute requiredPermission="wip">
-              <WIP />
-            </ProtectedRoute>
-          } />
-          <Route path="evaluation" element={
-            <ProtectedRoute requiredPermission="evaluation">
-              <Evaluation />
-            </ProtectedRoute>
-          } />
-          <Route path="profile" element={
-            <ProtectedRoute requiredPermission="profile">
-              <Profile />
-            </ProtectedRoute>
-          } />
-          <Route path="admin" element={
-            <ProtectedRoute requiredPermission="admin">
-              <AdminPanel />
-            </ProtectedRoute>
-          } />
-        </Route>
-      </Routes>
+      <Suspense fallback={<LoadingFallback />}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          
+          <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+            <Route index element={<ProtectedRoute requiredPermission="dashboard"><Dashboard /></ProtectedRoute>} />
+            <Route path="report" element={
+              <ProtectedRoute requiredPermission="report">
+                <ReportIncident />
+              </ProtectedRoute>
+            } />
+            <Route path="incidents" element={
+              <ProtectedRoute requiredPermission="incidents">
+                <IncidentsList />
+              </ProtectedRoute>
+            } />
+            <Route path="reports" element={
+              <ProtectedRoute requiredPermission="reports">
+                <Reports />
+              </ProtectedRoute>
+            } />
+            <Route path="analysis" element={
+              <ProtectedRoute requiredPermission="analysis">
+                <Analysis />
+              </ProtectedRoute>
+            } />
+            <Route path="wip" element={
+              <ProtectedRoute requiredPermission="wip">
+                <WIP />
+              </ProtectedRoute>
+            } />
+            <Route path="evaluation" element={
+              <ProtectedRoute requiredPermission="evaluation">
+                <Evaluation />
+              </ProtectedRoute>
+            } />
+            <Route path="profile" element={
+              <ProtectedRoute requiredPermission="profile">
+                <Profile />
+              </ProtectedRoute>
+            } />
+            <Route path="admin" element={
+              <ProtectedRoute requiredPermission="admin">
+                <AdminPanel />
+              </ProtectedRoute>
+            } />
+          </Route>
+        </Routes>
+      </Suspense>
     </ErrorBoundary>
   );
 }

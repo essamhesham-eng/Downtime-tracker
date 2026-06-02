@@ -6,7 +6,7 @@ import { useAlarmNotification } from '../hooks/useAlarmNotification';
 import { AnimatePresence, motion } from 'motion/react';
 
 export function Layout() {
-  const { profile, permissions, signOut } = useAuth();
+  const { profile, permissions, formatRole, signOut } = useAuth();
   const location = useLocation();
   
   const { activeAlarm, setActiveAlarm } = useAlarmNotification();
@@ -40,7 +40,7 @@ export function Layout() {
           </h1>
           <p className="text-sm text-gray-500 mt-1 truncate">{profile?.displayName}</p>
           <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full mt-2 capitalize">
-            {profile?.role.replace('_', ' ')}
+            {formatRole(profile?.role || '')}
           </span>
         </div>
 
