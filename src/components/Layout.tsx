@@ -4,9 +4,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { LayoutDashboard, AlertTriangle, Settings, FileSpreadsheet, LogOut, Wrench, User, LineChart, ClipboardList, Star } from 'lucide-react';
 import { useAlarmNotification } from '../hooks/useAlarmNotification';
 import { AnimatePresence, motion } from 'motion/react';
+import orbitLogo from '../assets/images/orbit360_logo_1780398756649.png';
 
 export function Layout() {
-  const { profile, permissions, formatRole, signOut } = useAuth();
+  const { profile, permissions, formatRole, signOut, logoSettings } = useAuth();
   const location = useLocation();
   
   const { activeAlarm, setActiveAlarm } = useAlarmNotification();
@@ -34,10 +35,18 @@ export function Layout() {
       {/* Sidebar / Bottom Nav */}
       <nav className="bg-white border-r border-gray-200 w-full md:w-64 flex-shrink-0 fixed bottom-0 md:relative z-40 md:h-screen flex md:flex-col shadow-[0_-2px_10px_rgba(0,0,0,0.05)] md:shadow-none">
         <div className="p-4 hidden md:block border-b border-gray-100">
-          <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <Wrench className="text-blue-600" />
-            Downtime Tracker
-          </h1>
+          <div className="flex flex-col gap-2 mb-2">
+            <img 
+              src={(logoSettings && logoSettings.customLogo) ? logoSettings.customLogo : orbitLogo} 
+              alt="ORBIT" 
+              style={{
+                height: logoSettings ? `${logoSettings.desktopHeight}px` : '44px',
+                width: logoSettings && logoSettings.desktopWidth !== 'auto' ? `${logoSettings.desktopWidth}px` : 'auto'
+              }}
+              className="object-contain self-start" 
+              referrerPolicy="no-referrer"
+            />
+          </div>
           <p className="text-sm text-gray-500 mt-1 truncate">{profile?.displayName}</p>
           <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full mt-2 capitalize">
             {formatRole(profile?.role || '')}
@@ -78,11 +87,17 @@ export function Layout() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto pb-20 md:pb-0 h-screen">
-        <div className="md:hidden bg-white p-4 shadow-sm flex justify-between items-center sticky top-0 z-10">
-          <h1 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <Wrench className="text-blue-600" size={20} />
-            Downtime Tracker
-          </h1>
+        <div className="md:hidden bg-white px-4 py-3 shadow-sm flex justify-between items-center sticky top-0 z-10 border-b border-gray-200">
+          <img 
+            src={(logoSettings && logoSettings.customLogo) ? logoSettings.customLogo : orbitLogo} 
+            alt="ORBIT" 
+            style={{
+              height: logoSettings ? `${logoSettings.mobileHeight}px` : '32px',
+              width: logoSettings && logoSettings.mobileWidth !== 'auto' ? `${logoSettings.mobileWidth}px` : 'auto'
+            }}
+            className="object-contain" 
+            referrerPolicy="no-referrer"
+          />
           <button onClick={signOut} className="p-2 text-gray-500 hover:text-red-600">
             <LogOut size={20} />
           </button>

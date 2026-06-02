@@ -29,15 +29,33 @@ export const DEFAULT_PERMISSIONS: RolePermissions = {
   pending: []
 };
 
+export interface LogoSettings {
+  desktopHeight: number;
+  desktopWidth: string;
+  mobileHeight: number;
+  mobileWidth: string;
+  customLogo?: string;
+}
+
+export const DEFAULT_LOGO_SETTINGS: LogoSettings = {
+  desktopHeight: 44,
+  desktopWidth: 'auto',
+  mobileHeight: 32,
+  mobileWidth: 'auto',
+  customLogo: ''
+};
+
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
   permissions: RolePermissions;
+  logoSettings: LogoSettings;
   formatRole: (role: string) => string;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  saveLogoSettings: (settings: LogoSettings) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -47,11 +65,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [permissions, setPermissions] = useState<RolePermissions>(DEFAULT_PERMISSIONS);
+  const [logoSettings, setLogoSettings] = useState<LogoSettings>(DEFAULT_LOGO_SETTINGS);
 
   const formatRole = React.useCallback((role: string) => {
     if (!role) return '';
     return permissions._displayNames?.[role] || role.replace(/_/g, ' ');
   }, [permissions]);
+
+  useEffect(() => {
+    const unsubLogo = onSnapshot(doc(db, 'settings', 'logo'), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setLogoSettings({
+          desktopHeight: data.desktopHeight ?? 44,
+          desktopWidth: data.desktopWidth ?? 'auto',
+          mobileHeight: data.mobileHeight ?? 32,
+          mobileWidth: data.mobileWidth ?? 'auto',
+          customLogo: data.customLogo ?? ''
+        });
+      } else {
+        setLogoSettings(DEFAULT_LOGO_SETTINGS);
+      }
+    }, (error) => {
+      console.error("Error listening to logo settings:", error);
+    });
+    return () => unsubLogo();
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -224,8 +263,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const saveLogoSettings = async (settings: LogoSettings) => {
+    try {
+      await setDoc(doc(db, 'settings', 'logo'), settings);
+    } catch (error) {
+      console.error("Error saving logo settings:", error);
+      throw error;
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, permissions, formatRole, signInWithEmail, signUpWithEmail, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, permissions, logoSettings, formatRole, signInWithEmail, signUpWithEmail, signOut, saveLogoSettings }}>
       {children}
     </AuthContext.Provider>
   );

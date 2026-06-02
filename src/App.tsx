@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Wrench } from 'lucide-react';
+import orbitLogo from './assets/images/orbit360_logo_1780398756649.png';
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard').then(mod => ({ default: mod.Dashboard })));
 const ReportIncident = React.lazy(() => import('./pages/ReportIncident').then(mod => ({ default: mod.ReportIncident })));
@@ -70,7 +71,7 @@ function ProtectedRoute({ children, requiredPermission }: { children: React.Reac
 }
 
 function Login() {
-  const { user, signInWithEmail, signUpWithEmail } = useAuth();
+  const { user, signInWithEmail, signUpWithEmail, logoSettings } = useAuth();
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState('');
@@ -120,8 +121,17 @@ function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 max-w-md w-full text-center">
-        <Wrench className="w-16 h-16 text-blue-600 mx-auto mb-6" />
-        <h1 className="text-3xl font-bold text-gray-800 mb-2">Downtime Tracker</h1>
+        <img 
+          src={(logoSettings && logoSettings.customLogo) ? logoSettings.customLogo : orbitLogo} 
+          alt="ORBIT" 
+          style={{
+            height: logoSettings ? `${logoSettings.desktopHeight * 1.3}px` : '56px',
+            width: logoSettings && logoSettings.desktopWidth !== 'auto' ? `${logoSettings.desktopWidth}px` : 'auto'
+          }}
+          className="object-contain mx-auto mb-6" 
+          referrerPolicy="no-referrer"
+        />
+        <h1 className="text-3xl font-bold text-gray-800 mb-2 font-sans tracking-tight">ORBIT</h1>
         <p className="text-gray-600 mb-8">
           Sign in to manage production lines and track machine downtime.
         </p>

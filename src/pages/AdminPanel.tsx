@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, updateDoc, doc, deleteDoc, getDoc, setDoc } from 'firebase/firestore';
 import { db, firebaseConfig } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Plus, Trash2, UserCog, GripVertical, Mail, Clock, Save, UserPlus, Crown, Edit2, X, Check } from 'lucide-react';
+import { Settings, Plus, Trash2, UserCog, GripVertical, Mail, Clock, Save, UserPlus, Crown, Edit2, X, Check, Upload, Image } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { MultiSelect } from '../components/MultiSelect';
 import { ProductionHoursModal } from '../components/ProductionHoursModal';
 
 export function AdminPanel() {
-  const { profile } = useAuth();
+  const { profile, logoSettings, saveLogoSettings } = useAuth();
   const [lines, setLines] = useState<any[]>([]);
   const [machines, setMachines] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
@@ -16,6 +16,51 @@ export function AdminPanel() {
   const [reasonCodes, setReasonCodes] = useState<any[]>([]);
   const [evaluationCauses, setEvaluationCauses] = useState<any[]>([]);
   const [invitations, setInvitations] = useState<any[]>([]);
+
+  const [localDesktopHeight, setLocalDesktopHeight] = useState(44);
+  const [desktopWidthType, setDesktopWidthType] = useState<'auto' | 'custom'>('auto');
+  const [localDesktopWidthVal, setLocalDesktopWidthVal] = useState('auto');
+  const [localMobileHeight, setLocalMobileHeight] = useState(32);
+  const [mobileWidthType, setMobileWidthType] = useState<'auto' | 'custom'>('auto');
+  const [localMobileWidthVal, setLocalMobileWidthVal] = useState('auto');
+  const [uploadedLogoBase64, setUploadedLogoBase64] = useState<string>('');
+  const [isSavingLogo, setIsSavingLogo] = useState(false);
+  const [logoSuccess, setLogoSuccess] = useState(false);
+  const [logoUploadError, setLogoUploadError] = useState<string>('');
+
+  useEffect(() => {
+    if (logoSettings) {
+      setLocalDesktopHeight(logoSettings.desktopHeight ?? 44);
+      setDesktopWidthType(logoSettings.desktopWidth === 'auto' ? 'auto' : 'custom');
+      setLocalDesktopWidthVal(logoSettings.desktopWidth === 'auto' ? '150' : logoSettings.desktopWidth);
+      setLocalMobileHeight(logoSettings.mobileHeight ?? 32);
+      setMobileWidthType(logoSettings.mobileWidth === 'auto' ? 'auto' : 'custom');
+      setLocalMobileWidthVal(logoSettings.mobileWidth === 'auto' ? '100' : logoSettings.mobileWidth);
+      setUploadedLogoBase64(logoSettings.customLogo ?? '');
+    }
+  }, [logoSettings]);
+
+  const handleSaveLogoSettings = async () => {
+    setIsSavingLogo(true);
+    setLogoSuccess(false);
+    setLogoUploadError('');
+    try {
+      await saveLogoSettings({
+        desktopHeight: localDesktopHeight,
+        desktopWidth: desktopWidthType === 'auto' ? 'auto' : localDesktopWidthVal || 'auto',
+        mobileHeight: localMobileHeight,
+        mobileWidth: mobileWidthType === 'auto' ? 'auto' : localMobileWidthVal || 'auto',
+        customLogo: uploadedLogoBase64
+      });
+      setLogoSuccess(true);
+      setTimeout(() => setLogoSuccess(false), 3000);
+    } catch (err: any) {
+      console.error('Error saving logo settings:', err);
+      setLogoUploadError(err.message || 'Failed to save logo options.');
+    } finally {
+      setIsSavingLogo(false);
+    }
+  };
 
   const [newLineName, setNewLineName] = useState('');
   const [newLineAllowOutOfOrder, setNewLineAllowOutOfOrder] = useState(false);
@@ -1511,6 +1556,209 @@ export function AdminPanel() {
             {isSavingPermissions ? 'Saving...' : 'Save Authorities'}
           </button>
           {permissionsSuccess && <span className="text-green-600 font-medium text-sm">Authorities saved successfully!</span>}
+        </div>
+      </div>
+
+      {/* Logo Configuration */}
+      <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-200">
+        <h3 className="text-xl font-bold text-gray-900 mb-6 border-b border-gray-200 pb-4 flex items-center gap-2">
+          <Settings size={20} className="text-blue-600" />
+          Logo Settings & Brand Assets
+        </h3>
+        <p className="text-sm text-gray-600 mb-6">
+          Upload your organization's logo file and customize its proportions across devices. Proportional values are dynamically synced in real-time.
+        </p>
+
+        {/* Upload Logo File */}
+        <div className="mb-8 p-6 bg-gray-50 border border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center text-center relative group hover:border-blue-500 transition-colors">
+          {uploadedLogoBase64 ? (
+            <div className="space-y-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Logo Live Preview</p>
+              <div className="p-4 bg-white rounded-xl border border-gray-100 shadow-xs inline-flex items-center justify-center min-h-[90px]">
+                <img 
+                  src={uploadedLogoBase64} 
+                  alt="App Logo" 
+                  className="max-h-20 max-w-xs object-contain"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+              <div className="flex justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setUploadedLogoBase64('')}
+                  className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
+                >
+                  <Trash2 size={14} />
+                  Restore Default Logo
+                </button>
+              </div>
+            </div>
+          ) : (
+            <label className="cursor-pointer space-y-2 py-4 px-6 flex flex-col items-center justify-center w-full">
+              <div className="p-3 bg-blue-50 text-blue-600 rounded-full group-hover:bg-blue-100 transition-colors">
+                <Upload size={24} />
+              </div>
+              <div>
+                <span className="text-sm font-semibold text-blue-600 hover:text-blue-700">Click to upload brand logo</span>
+                <p className="text-xs text-gray-500 mt-1">PNG, JPG, SVG, or WebP (max 800KB)</p>
+              </div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > 800 * 1024) {
+                    setLogoUploadError('Image is too large. Please select an image under 800KB.');
+                    return;
+                  }
+                  setLogoUploadError('');
+                  const reader = new FileReader();
+                  reader.onload = (event) => {
+                    if (event.target?.result) {
+                      setUploadedLogoBase64(event.target.result as string);
+                    }
+                  };
+                  reader.readAsDataURL(file);
+                }}
+                className="hidden"
+              />
+            </label>
+          )}
+          {logoUploadError && (
+            <p className="text-xs font-medium text-red-600 mt-2 bg-red-50 px-3 py-1 rounded-full border border-red-100">
+              {logoUploadError}
+            </p>
+          )}
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          {/* Desktop Sizing */}
+          <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
+            <h4 className="font-bold text-gray-800 text-sm">Desktop View (Sidebar)</h4>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                Height: {localDesktopHeight}px
+              </label>
+              <input
+                type="range"
+                min="20"
+                max="120"
+                value={localDesktopHeight}
+                onChange={(e) => setLocalDesktopHeight(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              />
+              <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <span>20px</span>
+                <span>120px</span>
+              </div>
+            </div>
+            <div>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="desktopWidthType"
+                    checked={desktopWidthType === 'auto'}
+                    onChange={() => setDesktopWidthType('auto')}
+                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  Auto Width
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="desktopWidthType"
+                    checked={desktopWidthType === 'custom'}
+                    onChange={() => setDesktopWidthType('custom')}
+                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  Custom Width (px)
+                </label>
+              </div>
+              {desktopWidthType === 'custom' && (
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    value={localDesktopWidthVal}
+                    onChange={(e) => setLocalDesktopWidthVal(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. 150"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Mobile Sizing */}
+          <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
+            <h4 className="font-bold text-gray-800 text-sm">Mobile View (Header)</h4>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                Height: {localMobileHeight}px
+              </label>
+              <input
+                type="range"
+                min="16"
+                max="80"
+                value={localMobileHeight}
+                onChange={(e) => setLocalMobileHeight(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              />
+              <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <span>16px</span>
+                <span>80px</span>
+              </div>
+            </div>
+            <div>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="mobileWidthType"
+                    checked={mobileWidthType === 'auto'}
+                    onChange={() => setMobileWidthType('auto')}
+                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  Auto Width
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="mobileWidthType"
+                    checked={mobileWidthType === 'custom'}
+                    onChange={() => setMobileWidthType('custom')}
+                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  Custom Width (px)
+                </label>
+              </div>
+              {mobileWidthType === 'custom' && (
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    value={localMobileWidthVal}
+                    onChange={(e) => setLocalMobileWidthVal(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. 120"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <button
+            onClick={handleSaveLogoSettings}
+            disabled={isSavingLogo}
+            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+          >
+            <Save size={18} />
+            {isSavingLogo ? 'Saving Brand...' : 'Save Settings'}
+          </button>
+          {logoSuccess && <span className="text-green-600 font-medium text-sm">Logo and dimension settings saved successfully!</span>}
+          {logoUploadError && <span className="text-red-600 font-medium text-sm">{logoUploadError}</span>}
         </div>
       </div>
 
