@@ -143,6 +143,21 @@ export function Dashboard() {
     return incidents.find(i => i.machineId === machine.id && (i.status === 'open' || i.status === 'working_on' || i.status === 'pending_me_review'));
   }, [incidents]);
 
+  const formatStoppedTime = (minutes: number) => {
+    const totalHrs = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    const days = Math.floor(totalHrs / 24);
+    const hrs = totalHrs % 24;
+    
+    if (days > 0) {
+      return `${days}d : ${hrs}hr : ${mins}min`;
+    } else if (totalHrs > 0) {
+      return `${totalHrs}hr : ${mins}min`;
+    } else {
+      return `${minutes}min`;
+    }
+  };
+
   const handleLineBackToWork = async (lineId: string) => {
     try {
       const batch = writeBatch(db);
@@ -157,7 +172,14 @@ export function Dashboard() {
       if (openIssue) {
         const incidentRef = doc(db, 'incidents', openIssue.id);
         const startTime = openIssue.startTime?.toDate ? openIssue.startTime.toDate() : new Date();
-        const durationMin = Math.max(1, Math.ceil((now.getTime() - startTime.getTime()) / 60000));
+        
+        let durationMin;
+        if (openIssue.type === 'line_off') {
+          const shiftHours = productionHours[lineId] ?? 9;
+          durationMin = shiftHours * 60;
+        } else {
+          durationMin = Math.max(1, Math.ceil((now.getTime() - startTime.getTime()) / 60000));
+        }
         
         batch.update(incidentRef, {
           status: 'resolved',
@@ -277,9 +299,7 @@ export function Dashboard() {
                 const startTime = activeIssue.startTime?.toDate ? activeIssue.startTime.toDate() : new Date();
                 const totalMs = now.getTime() - startTime.getTime();
                 const totalMin = Math.floor(Math.max(0, totalMs) / 60000);
-                const hrs = Math.floor(totalMin / 60);
-                const mins = totalMin % 60;
-                countdownText = ` (${hrs}h ${mins.toString().padStart(2, '0')}m)`;
+                countdownText = ` (${formatStoppedTime(totalMin)})`;
               } else {
                 if (line.status === 'upcoming' && (activeIssue as any).remainingTimeMinutes) {
                   const startTime = activeIssue.startTime?.toDate ? activeIssue.startTime.toDate() : new Date();
@@ -296,7 +316,7 @@ export function Dashboard() {
                   const startTime = activeIssue.startTime?.toDate ? activeIssue.startTime.toDate() : new Date();
                   const totalMs = now.getTime() - startTime.getTime();
                   const totalMin = Math.max(1, Math.ceil(Math.max(0, totalMs) / 60000));
-                  countdownText = ` (${totalMin} min)`;
+                  countdownText = ` (${formatStoppedTime(totalMin)})`;
                 }
               }
             }
@@ -420,8 +440,8 @@ export function Dashboard() {
                             
                             {isDown && selectedMachineId !== machine.id && (
                               <div className={`flex flex-col items-center ${isCompactView ? 'mt-0.5' : 'mt-1'}`}>
-                                <span className={`font-bold text-red-600 ${isCompactView ? 'text-[9px]' : 'text-xs'}`}>
-                                  {duration}m
+                                <span className={`font-bold text-red-600 ${isCompactView ? 'text-[9px]' : 'text-xs'} whitespace-nowrap`}>
+                                  {formatStoppedTime(duration)}
                                 </span>
                                 {incident?.breakdownJigs != null && !isCompactView && (
                                   <span className="text-[10px] font-semibold text-orange-600 bg-orange-100 px-1.5 py-0.5 rounded-full mt-0.5">

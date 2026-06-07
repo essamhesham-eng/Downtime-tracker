@@ -1,14 +1,14 @@
-import React from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import React, { useState, useRef } from 'react';
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { LayoutDashboard, AlertTriangle, Settings, FileSpreadsheet, LogOut, Wrench, User, LineChart, ClipboardList, Star } from 'lucide-react';
 import { useAlarmNotification } from '../hooks/useAlarmNotification';
-import { AnimatePresence, motion } from 'motion/react';
 import orbitLogo from '../assets/images/orbit360_logo_1780398756649.png';
 
 export function Layout() {
   const { profile, permissions, formatRole, signOut, logoSettings } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   
   const { activeAlarm, setActiveAlarm } = useAlarmNotification();
 
@@ -86,7 +86,9 @@ export function Layout() {
       </nav>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto pb-20 md:pb-0 h-screen">
+      <main 
+        className="flex-1 overflow-y-auto pb-20 md:pb-0 h-screen overflow-x-hidden"
+      >
         <div className="md:hidden bg-white px-4 py-3 shadow-sm flex justify-between items-center sticky top-0 z-10 border-b border-gray-200">
           <img 
             src={(logoSettings && logoSettings.customLogo) ? logoSettings.customLogo : orbitLogo} 
@@ -103,17 +105,7 @@ export function Layout() {
           </button>
         </div>
         <div className="p-4 md:p-8 max-w-7xl mx-auto">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              <Outlet />
-            </motion.div>
-          </AnimatePresence>
+          <Outlet />
         </div>
       </main>
 

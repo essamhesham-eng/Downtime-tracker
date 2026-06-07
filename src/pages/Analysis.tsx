@@ -47,6 +47,7 @@ export function Analysis() {
   const [incidentTypesMetric, setIncidentTypesMetric] = useState<'days' | 'hours' | 'minutes' | 'events'>('minutes');
   const [productionHoursData, setProductionHoursData] = useState<any[]>([]);
   const [isProductionHoursModalOpen, setIsProductionHoursModalOpen] = useState(false);
+  const [downtimeDisplayCount, setDowntimeDisplayCount] = useState(20);
 
   const currentDatePreset = useMemo(() => {
     const today = getServerTime();
@@ -205,9 +206,16 @@ export function Analysis() {
   const getIncidentDuration = React.useCallback((inc: any) => {
     if (inc.durationMinutes != null) return inc.durationMinutes;
     if (!inc.startTime) return 0;
+    if (inc.type === 'line_off') {
+      const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
+      const dateStr = format(start, 'yyyy-MM-dd');
+      const prodHourObj = productionHoursData.find(ph => ph.date === dateStr && ph.lineId === inc.lineId);
+      const hours = prodHourObj ? prodHourObj.hours : 9;
+      return hours * 60;
+    }
     const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
     return Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
-  }, []);
+  }, [productionHoursData]);
 
   // KPIs (Memoized to prevent unnecessary recalculations on state updates)
   const totalDowntimeMinutes = useMemo(() => {
@@ -520,12 +528,14 @@ export function Analysis() {
     let lineStoppedDuration = 0;
     let breakdownDuration = 0;
     let maintenanceDuration = 0;
+    let lineOffDuration = 0;
 
     let outOfOrderEvents = 0;
     let upcomingIssueEvents = 0;
     let lineStoppedEvents = 0;
     let breakdownEvents = 0;
     let maintenanceEvents = 0;
+    let lineOffEvents = 0;
 
     allMatchingIncidents.forEach(inc => {
       const duration = getIncidentDuration(inc);
@@ -544,6 +554,9 @@ export function Analysis() {
       } else if (inc.type === 'maintenance') {
         maintenanceDuration += duration;
         maintenanceEvents++;
+      } else if (inc.type === 'line_off') {
+        lineOffDuration += duration;
+        lineOffEvents++;
       } else {
         breakdownDuration += duration;
         breakdownEvents++;
@@ -560,6 +573,7 @@ export function Analysis() {
     const outOfOrderVal = getValue(outOfOrderDuration, outOfOrderEvents);
     const upcomingIssueVal = getValue(upcomingIssueDuration, upcomingIssueEvents);
     const lineStoppedVal = getValue(lineStoppedDuration, lineStoppedEvents);
+    const lineOffVal = getValue(lineOffDuration, lineOffEvents);
     const breakdownVal = getValue(breakdownDuration, breakdownEvents);
     const maintenanceVal = getValue(maintenanceDuration, maintenanceEvents);
 
@@ -567,6 +581,7 @@ export function Analysis() {
     if (outOfOrderVal > 0) data.push({ name: 'Out of Order', value: outOfOrderVal, color: '#f59e0b' });
     if (upcomingIssueVal > 0) data.push({ name: 'Upcoming Issue', value: upcomingIssueVal, color: '#fde047' });
     if (lineStoppedVal > 0) data.push({ name: 'Line Stopped', value: lineStoppedVal, color: '#ef4444' });
+    if (lineOffVal > 0) data.push({ name: 'Line Off', value: lineOffVal, color: '#6b7280' });
     if (breakdownVal > 0) data.push({ name: 'Breakdown', value: breakdownVal, color: '#ef4444' });
     if (maintenanceVal > 0) data.push({ name: 'Maintenance', value: maintenanceVal, color: '#3b82f6' });
 
@@ -1221,7 +1236,7 @@ export function Analysis() {
                   <td colSpan={9} className="p-8 text-center text-gray-500">No downtime events found.</td>
                 </tr>
               ) : (
-                allIssues.map(inc => (
+                allIssues.slice(0, downtimeDisplayCount).map(inc => (
                   <tr key={inc.id} className="hover:bg-gray-50">
                     <td className="p-4 font-medium text-gray-800">{inc.machineName}</td>
                     <td className="p-4 text-gray-600">{inc.lineName}</td>
@@ -1234,6 +1249,8 @@ export function Analysis() {
                         </span>
                       ) : inc.type === 'maintenance' ? (
                         <span className="inline-block px-2 py-1 bg-blue-100 text-blue-800 rounded font-medium text-xs whitespace-nowrap">Maintenance</span>
+                      ) : inc.type === 'line_off' ? (
+                        <span className="inline-block px-2 py-1 bg-gray-100 text-gray-800 rounded font-medium text-xs whitespace-nowrap">Line Off</span>
                       ) : (
                         <span className="inline-block px-2 py-1 bg-red-100 text-red-800 rounded font-medium text-xs whitespace-nowrap">Breakdown</span>
                       )}
@@ -1264,6 +1281,16 @@ export function Analysis() {
             </tbody>
           </table>
         </div>
+        {downtimeDisplayCount < allIssues.length && (
+          <div className="mt-4 mb-6 flex justify-center">
+            <button
+              onClick={() => setDowntimeDisplayCount(prev => prev + 20)}
+              className="px-6 py-2 bg-white border border-gray-200 shadow-sm text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Load more
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Production Hours Modal */}

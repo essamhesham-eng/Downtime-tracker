@@ -34,6 +34,7 @@ export function IncidentsList() {
   const [resolvedSearch, setResolvedSearch] = useState('');
   const [resolvedSortField, setResolvedSortField] = useState<'startTime' | 'durationMinutes' | 'machineName' | 'lineName'>('startTime');
   const [resolvedSortOrder, setResolvedSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [resolvedDisplayCount, setResolvedDisplayCount] = useState(20);
   
   // Admin Selection
   const [selectedResolvedIds, setSelectedResolvedIds] = useState<Set<string>>(new Set());
@@ -128,7 +129,24 @@ export function IncidentsList() {
     if (!user) return;
     try {
       const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
-      const duration = Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
+      
+      let duration;
+      if (incident.type === 'line_off') {
+        let prodHours = 9;
+        const dateStr = format(start, 'yyyy-MM-dd');
+        const docId = `${dateStr}_${incident.lineId}`;
+        try {
+          const phDoc = await getDoc(doc(db, 'production_hours', docId));
+          if (phDoc.exists()) {
+            prodHours = phDoc.data().hours;
+          }
+        } catch (e) {
+          console.error("Error fetching line off production hours:", e);
+        }
+        duration = prodHours * 60;
+      } else {
+        duration = Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
+      }
 
       if (incident.type === 'out_of_order') {
         // For out of order, we prompt for a responsible group first
@@ -242,7 +260,24 @@ export function IncidentsList() {
         // Only set endTime and duration if they don't already exist (e.g., if line leader already marked it fixed)
         if (!reviewingIncident.endTime) {
           const start = reviewingIncident.startTime?.toDate ? reviewingIncident.startTime.toDate() : new Date(reviewingIncident.startTime);
-          const duration = Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
+          
+          let duration;
+          if (reviewingIncident.type === 'line_off') {
+            let prodHours = 9;
+            const dateStr = format(start, 'yyyy-MM-dd');
+            const docId = `${dateStr}_${reviewingIncident.lineId}`;
+            try {
+              const phDoc = await getDoc(doc(db, 'production_hours', docId));
+              if (phDoc.exists()) {
+                prodHours = phDoc.data().hours;
+              }
+            } catch (e) {
+              console.error("Error fetching line off production hours:", e);
+            }
+            duration = prodHours * 60;
+          } else {
+            duration = Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
+          }
           
           updates.resolvedBy = user.uid;
           updates.resolvedByName = user.displayName || user.email || 'Unknown';
@@ -819,7 +854,7 @@ export function IncidentsList() {
                   <td colSpan={profile?.role === 'admin' ? 13 : 12} className="p-8 text-center text-gray-500 border-b border-gray-100">No resolved incidents match your criteria.</td>
                 </tr>
               ) : (
-                filteredResolvedIncidents.map(incident => {
+                filteredResolvedIncidents.slice(0, resolvedDisplayCount).map(incident => {
                   const start = incident.startTime?.toDate ? incident.startTime.toDate() : new Date(incident.startTime);
                   const isOutOfOrder = incident.type === 'out_of_order';
                   return (
@@ -916,6 +951,16 @@ export function IncidentsList() {
             </tbody>
           </table>
         </div>
+        {resolvedDisplayCount < filteredResolvedIncidents.length && (
+          <div className="mt-4 flex justify-center">
+            <button
+              onClick={() => setResolvedDisplayCount(prev => prev + 20)}
+              className="px-6 py-2 bg-white border border-gray-200 shadow-sm text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Load more
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Review Modal */}

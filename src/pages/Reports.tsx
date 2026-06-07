@@ -41,9 +41,12 @@ export function Reports() {
 
   const [selectedIncidents, setSelectedIncidents] = useState<string[]>([]);
   const [selectedWipEntries, setSelectedWipEntries] = useState<string[]>([]);
+  const [selectedShiftHours, setSelectedShiftHours] = useState<string[]>([]);
+  const [selectedEvaluations, setSelectedEvaluations] = useState<string[]>([]);
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
 
   const [editingIncident, setEditingIncident] = useState<any | null>(null);
-  const [itemToDelete, setItemToDelete] = useState<{ ids: string[], type: 'incident' | 'wip' } | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<{ ids: string[], type: 'incident' | 'wip' | 'shift_hrs' | 'evaluation' | 'users' } | null>(null);
   const [editStatus, setEditStatus] = useState('');
   const [editDuration, setEditDuration] = useState<number | ''>('');
   const [editMachineName, setEditMachineName] = useState('');
@@ -284,9 +287,16 @@ export function Reports() {
   const getIncidentDuration = React.useCallback((inc: any) => {
     if (inc.durationMinutes != null) return inc.durationMinutes;
     if (!inc.startTime) return 0;
+    if (inc.type === 'line_off') {
+      const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
+      const dateStr = format(start, 'yyyy-MM-dd');
+      const prodHourObj = productionHours.find(ph => ph.date === dateStr && ph.lineId === inc.lineId);
+      const hours = prodHourObj ? prodHourObj.hours : 9;
+      return hours * 60;
+    }
     const start = inc.startTime.toDate ? inc.startTime.toDate() : new Date(inc.startTime);
     return Math.max(1, Math.ceil((getServerTime().getTime() - start.getTime()) / 60000));
-  }, []);
+  }, [productionHours]);
 
   const dateRange = useMemo(() => {
     try {
@@ -353,6 +363,33 @@ export function Reports() {
     setItemToDelete({ ids: selectedWipEntries, type: 'wip' });
   };
 
+  const handleDeleteShiftHour = (id: string) => {
+    setItemToDelete({ ids: [id], type: 'shift_hrs' });
+  };
+
+  const handleBulkDeleteShiftHours = () => {
+    if (selectedShiftHours.length === 0) return;
+    setItemToDelete({ ids: selectedShiftHours, type: 'shift_hrs' });
+  };
+
+  const handleDeleteEvaluation = (id: string) => {
+    setItemToDelete({ ids: [id], type: 'evaluation' });
+  };
+
+  const handleBulkDeleteEvaluations = () => {
+    if (selectedEvaluations.length === 0) return;
+    setItemToDelete({ ids: selectedEvaluations, type: 'evaluation' });
+  };
+
+  const handleDeleteUser = (id: string) => {
+    setItemToDelete({ ids: [id], type: 'users' });
+  };
+
+  const handleBulkDeleteUsers = () => {
+    if (selectedUsers.length === 0) return;
+    setItemToDelete({ ids: selectedUsers, type: 'users' });
+  };
+
   const confirmDelete = async () => {
     if (!itemToDelete) return;
     setIsSaving(true);
@@ -373,6 +410,27 @@ export function Reports() {
         await Promise.all(promises);
         setWipEntries(prev => prev.filter(entry => !itemToDelete.ids.includes(entry.id)));
         setSelectedWipEntries([]);
+      } else if (itemToDelete.type === 'shift_hrs') {
+        itemToDelete.ids.forEach(id => {
+          promises.push(deleteDoc(doc(db, 'production_hours', id)));
+        });
+        await Promise.all(promises);
+        setProductionHours(prev => prev.filter(entry => !itemToDelete.ids.includes(entry.id)));
+        setSelectedShiftHours([]);
+      } else if (itemToDelete.type === 'evaluation') {
+        itemToDelete.ids.forEach(id => {
+          promises.push(deleteDoc(doc(db, 'evaluations', id)));
+        });
+        await Promise.all(promises);
+        setEvaluations(prev => prev.filter(entry => !itemToDelete.ids.includes(entry.id)));
+        setSelectedEvaluations([]);
+      } else if (itemToDelete.type === 'users') {
+        itemToDelete.ids.forEach(id => {
+          promises.push(deleteDoc(doc(db, 'users', id)));
+        });
+        await Promise.all(promises);
+        setUsers(prev => prev.filter(entry => !itemToDelete.ids.includes(entry.id)));
+        setSelectedUsers([]);
       }
       setItemToDelete(null);
     } catch (err: any) {
@@ -425,6 +483,7 @@ export function Reports() {
              if (row['Type'] === 'Out of Order') type = 'out_of_order';
              if (row['Type'] === 'Upcoming Issue' || row['Type'] === 'Line Stopped') type = 'line_issue';
              if (row['Type'] === 'Breakdown') type = 'breakdown';
+             if (row['Type'] === 'Line Off') type = 'line_off';
 
              const endStr = row['End Time'];
 
@@ -504,7 +563,7 @@ export function Reports() {
           'Line Name': incident.lineName,
           'Machine Name': incident.machineName,
           'Status': incident.status,
-          'Type': incident.type === 'out_of_order' ? 'Out of Order' : incident.type === 'line_issue' ? (incident.lineIssueType === 'upcoming' || incident.remainingTimeMinutes != null ? 'Upcoming Issue' : 'Line Stopped') : incident.type === 'maintenance' ? 'Maintenance' : 'Breakdown',
+          'Type': incident.type === 'line_off' ? 'Line Off' : incident.type === 'out_of_order' ? 'Out of Order' : incident.type === 'line_issue' ? (incident.lineIssueType === 'upcoming' || incident.remainingTimeMinutes != null ? 'Upcoming Issue' : 'Line Stopped') : incident.type === 'maintenance' ? 'Maintenance' : 'Breakdown',
           'Start Time': start ? format(start, 'yyyy-MM-dd HH:mm:ss') : 'N/A',
           'End Time': end ? format(end, 'yyyy-MM-dd HH:mm:ss') : 'Ongoing',
           'Duration (Minutes)': getIncidentDuration(incident),
@@ -1314,16 +1373,44 @@ export function Reports() {
 
       {activeTab === 'users' && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          {profile?.role === 'admin' && selectedUsers.length > 0 && (
+            <div className="p-3 bg-red-50 border-b border-red-100 flex justify-between items-center">
+              <span className="text-red-800 font-medium text-sm">
+                {selectedUsers.length} user(s) selected
+              </span>
+              <button
+                onClick={handleBulkDeleteUsers}
+                disabled={isSaving}
+                className="px-3 py-1.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                <Trash2 size={16} /> Delete Selected ({selectedUsers.length})
+              </button>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-max">
               <thead>
                 <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
+                  {profile?.role === 'admin' && (
+                    <th className="p-4 w-12 text-center">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedUsers.length > 0 && selectedUsers.length === users.length}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedUsers(users.map(u => u.id));
+                          else setSelectedUsers([]);
+                        }}
+                        className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer w-4 h-4"
+                      />
+                    </th>
+                  )}
                   <th className="p-4 font-medium">Name</th>
                   <th className="p-4 font-medium">Email</th>
                   <th className="p-4 font-medium">Role</th>
                   <th className="p-4 font-medium">Status</th>
                   <th className="p-4 font-medium">Created At</th>
                   <th className="p-4 font-medium">Last Active</th>
+                  {profile?.role === 'admin' && <th className="p-4 font-medium text-center">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -1340,7 +1427,20 @@ export function Reports() {
                   }
                   
                   return (
-                    <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                    <tr key={u.id} className={`${selectedUsers.includes(u.id) ? 'bg-red-50/50' : 'hover:bg-gray-50'} transition-colors`}>
+                      {profile?.role === 'admin' && (
+                        <td className="p-4 text-center">
+                          <input 
+                            type="checkbox"
+                            checked={selectedUsers.includes(u.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedUsers(prev => [...prev, u.id]);
+                              else setSelectedUsers(prev => prev.filter(id => id !== u.id));
+                            }}
+                            className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer w-4 h-4"
+                          />
+                        </td>
+                      )}
                       <td className="p-4 text-gray-800 font-medium">{u.displayName || 'Unknown'}</td>
                       <td className="p-4 text-gray-600">{u.email || 'N/A'}</td>
                       <td className="p-4">
@@ -1364,12 +1464,23 @@ export function Reports() {
                       </td>
                       <td className="p-4 text-gray-500 text-sm">{createdAt}</td>
                       <td className="p-4 text-gray-500 text-sm">{lastActive}</td>
+                      {profile?.role === 'admin' && (
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={() => handleDeleteUser(u.id)}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete User"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
                 {users.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-gray-500">
+                    <td colSpan={profile?.role === 'admin' ? 8 : 6} className="p-8 text-center text-gray-500">
                       No users found.
                     </td>
                   </tr>
@@ -1382,10 +1493,37 @@ export function Reports() {
 
       {activeTab === 'evaluation' && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          {profile?.role === 'admin' && selectedEvaluations.length > 0 && (
+            <div className="p-3 bg-red-50 border-b border-red-100 flex justify-between items-center">
+              <span className="text-red-800 font-medium text-sm">
+                {selectedEvaluations.length} evaluation(s) selected
+              </span>
+              <button
+                onClick={handleBulkDeleteEvaluations}
+                disabled={isSaving}
+                className="px-3 py-1.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                <Trash2 size={16} /> Delete Selected ({selectedEvaluations.length})
+              </button>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-max">
               <thead>
                 <tr className="bg-gray-50 text-gray-600 text-sm uppercase tracking-wider border-b border-gray-200">
+                  {profile?.role === 'admin' && (
+                    <th className="p-4 w-12 text-center">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedEvaluations.length > 0 && selectedEvaluations.length === filteredEvaluations.length}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedEvaluations(filteredEvaluations.map(ev => ev.id));
+                          else setSelectedEvaluations([]);
+                        }}
+                        className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer w-4 h-4"
+                      />
+                    </th>
+                  )}
                   <th className="p-4 font-medium">Operator Name</th>
                   <th className="p-4 font-medium">Code</th>
                   <th className="p-4 font-medium">Points Change</th>
@@ -1393,6 +1531,7 @@ export function Reports() {
                   <th className="p-4 font-medium">Comment</th>
                   <th className="p-4 font-medium">Evaluator</th>
                   <th className="p-4 font-medium">Date & Time</th>
+                  {profile?.role === 'admin' && <th className="p-4 font-medium text-center">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -1404,7 +1543,20 @@ export function Reports() {
                   }
                   
                   return (
-                    <tr key={ev.id} className="hover:bg-gray-50 transition-colors">
+                    <tr key={ev.id} className={`${selectedEvaluations.includes(ev.id) ? 'bg-red-50/50' : 'hover:bg-gray-50'} transition-colors`}>
+                      {profile?.role === 'admin' && (
+                        <td className="p-4 text-center">
+                          <input 
+                            type="checkbox"
+                            checked={selectedEvaluations.includes(ev.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedEvaluations(prev => [...prev, ev.id]);
+                              else setSelectedEvaluations(prev => prev.filter(id => id !== ev.id));
+                            }}
+                            className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer w-4 h-4"
+                          />
+                        </td>
+                      )}
                       <td className="p-4 text-gray-800 font-medium">{ev.operatorName || 'Unknown'}</td>
                       <td className="p-4 text-gray-500 font-mono text-sm">{ev.operatorCode || 'N/A'}</td>
                       <td className="p-4">
@@ -1416,12 +1568,23 @@ export function Reports() {
                       <td className="p-4 text-gray-600 max-w-xs truncate" title={ev.comment}>{ev.comment || 'N/A'}</td>
                       <td className="p-4 text-gray-800 text-sm">{ev.evaluatorName || 'Unknown'}</td>
                       <td className="p-4 text-gray-500 text-sm">{createdAt}</td>
+                      {profile?.role === 'admin' && (
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={() => handleDeleteEvaluation(ev.id)}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete Evaluation"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
                 {filteredEvaluations.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-gray-500">
+                    <td colSpan={profile?.role === 'admin' ? 9 : 7} className="p-8 text-center text-gray-500">
                       No evaluation data found for this period.
                     </td>
                   </tr>
@@ -1613,7 +1776,13 @@ export function Reports() {
           <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full">
             <h3 className="text-xl font-bold text-gray-900 mb-2">Confirm Delete</h3>
             <p className="text-gray-600 mb-6">
-              Are you sure you want to permanently delete {itemToDelete.ids.length > 1 ? `these ${itemToDelete.ids.length}` : 'this'} {itemToDelete.type === 'incident' ? 'downtime incident(s)' : 'WIP entry(s)'}? This action cannot be undone.
+              Are you sure you want to permanently delete {itemToDelete.ids.length > 1 ? `these ${itemToDelete.ids.length}` : 'this'} {
+                itemToDelete.type === 'incident' ? 'downtime incident(s)' : 
+                itemToDelete.type === 'wip' ? 'WIP entry(s)' :
+                itemToDelete.type === 'shift_hrs' ? 'shift hours record(s)' :
+                itemToDelete.type === 'evaluation' ? 'evaluation(s)' :
+                'user(s)'
+              }? This action cannot be undone.
             </p>
             <div className="flex justify-end gap-3">
               <button

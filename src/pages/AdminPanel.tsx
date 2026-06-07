@@ -7,6 +7,8 @@ import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea
 import { MultiSelect } from '../components/MultiSelect';
 import { ProductionHoursModal } from '../components/ProductionHoursModal';
 
+import { DataManagement } from '../components/DataManagement';
+
 export function AdminPanel() {
   const { profile, logoSettings, saveLogoSettings } = useAuth();
   const [lines, setLines] = useState<any[]>([]);
@@ -124,6 +126,7 @@ export function AdminPanel() {
     { id: 'incidents', label: 'Active Incidents' },
     { id: 'wip', label: 'WIP' },
     { id: 'evaluation', label: 'Evaluation' },
+    { id: 'evaluation_analysis', label: 'Evaluation Analysis' },
     { id: 'analysis', label: 'Analysis' },
     { id: 'reports', label: 'Export Data' },
     { id: 'admin', label: 'Admin Panel' },
@@ -1842,6 +1845,9 @@ export function AdminPanel() {
           </table>
         </div>
       </div>
+
+      <DataManagement />
+
       {/* Delete Confirmation Modal */}
       {itemToDelete && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

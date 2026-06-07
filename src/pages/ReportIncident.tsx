@@ -238,7 +238,7 @@ export function ReportIncident() {
             <AlertTriangle size={24} />
           </div>
           <h2 className="text-2xl font-bold text-gray-800">
-            Report Machine Breakdown
+            Report Line Breakdown
           </h2>
         </div>
 
